@@ -1,156 +1,146 @@
 """
-PrintStudio Pro v3.0 — Solution d'impression professionnelle
-Grand Format (Vinyle / Bâche) + DTF + Suppression de fond
-Thème Clair / Sombre — RIP intégré CMJN/TIF/PMN
+PrintStudio Pro v4.0
+Système RIP professionnel — Grand Format · DTF · Suppression de fond IA
 """
-
 import streamlit as st
-import io, zipfile
+import io, zipfile, math
 from pathlib import Path
 from datetime import datetime
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
+import cv2
 
 try:
     import fitz
-    HAS_MUPDF = True
+    HAS_PDF = True
 except ImportError:
-    HAS_MUPDF = False
+    HAS_PDF = False
 
-# ═══════════════════════════════════════════════════════════
-# PAGE CONFIG
-# ═══════════════════════════════════════════════════════════
-st.set_page_config(
-    page_title="PrintStudio Pro",
-    page_icon="🖨️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# ─────────────────────────────────────────────────────────
+# CONFIG PAGE
+# ─────────────────────────────────────────────────────────
+st.set_page_config(page_title="PrintStudio Pro", page_icon="🖨️",
+                   layout="wide", initial_sidebar_state="expanded")
 
-# ═══════════════════════════════════════════════════════════
-# SIDEBAR — THÈME & INFOS
-# ═══════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚙️ Paramètres")
-    theme = st.radio("Thème", ["🌙 Sombre", "☀️ Clair"], index=0, key="theme")
-    DARK = theme == "🌙 Sombre"
+    DARK = st.radio("Thème", ["🌙 Sombre", "☀️ Clair"], index=0) == "🌙 Sombre"
     st.markdown("---")
-    st.markdown("**PrintStudio Pro** `v3.0`")
-    st.caption("Système RIP intégré\nCMJN · TIF · PMN\nGrand Format · DTF")
+    st.markdown("**PrintStudio Pro** `v4.0`")
+    st.caption("Système RIP intégré\nCMJN · TIF · PRN\nGrand Format · DTF")
     st.markdown("---")
-    st.markdown("**Formats supportés**")
-    st.caption("PDF · PNG · JPG · TIF\nAI · EPS · CDR · SVG · BMP")
+    st.caption("Formats supportés :\nPDF · PNG · JPG · TIF\nAI · EPS · CDR · SVG · BMP")
 
-# ═══════════════════════════════════════════════════════════
-# PALETTE THÈME
-# ═══════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────
+# THÈME
+# ─────────────────────────────────────────────────────────
 if DARK:
-    BG="#0d0f14"; SURFACE="#161921"; SURFACE2="#1e2330"; BORDER="#2a3045"
-    TEXT="#e8ecf5"; MUTED="#7a869a"; ACCENT="#ff5c1a"; GREEN="#00c8a0"
-    BLUE="#4da6ff"; WARN="#ffb020"; PREV_BG="#111520"; PREV_GRID="#1d2235"
-    SHADOW="rgba(0,0,0,.22)"; INFO_BG="rgba(77,166,255,.07)"; INFO_BD="rgba(77,166,255,.3)"
-    OK_BG="rgba(0,200,160,.07)"; OK_BD="rgba(0,200,160,.35)"; WARN_BG="rgba(255,176,32,.07)"; WARN_BD="rgba(255,176,32,.3)"
+    BG="#0d0f14";SRF="#161921";SRF2="#1e2330";BOR="#2a3045"
+    TXT="#e8ecf5";MUT="#7a869a";ACC="#ff5c1a";GRN="#00c8a0";BLU="#4da6ff";WRN="#ffb020"
+    PBG="#111520";PGR="#1d2235";SHD="rgba(0,0,0,.25)"
+    IBG="rgba(77,166,255,.07)";IBD="rgba(77,166,255,.3)"
+    OBG="rgba(0,200,160,.07)";OBD="rgba(0,200,160,.35)"
+    WBG="rgba(255,176,32,.07)";WBD="rgba(255,176,32,.3)"
 else:
-    BG="#f4f6fb"; SURFACE="#ffffff"; SURFACE2="#eef0f8"; BORDER="#d5d9ec"
-    TEXT="#1a1e2e"; MUTED="#6b7280"; ACCENT="#e64a00"; GREEN="#00a882"
-    BLUE="#2563eb"; WARN="#d97706"; PREV_BG="#e8eaf2"; PREV_GRID="#d2d6e8"
-    SHADOW="rgba(0,0,0,.07)"; INFO_BG="rgba(37,99,235,.06)"; INFO_BD="rgba(37,99,235,.25)"
-    OK_BG="rgba(0,168,130,.07)"; OK_BD="rgba(0,168,130,.3)"; WARN_BG="rgba(217,119,6,.06)"; WARN_BD="rgba(217,119,6,.25)"
+    BG="#f4f6fb";SRF="#ffffff";SRF2="#eef0f8";BOR="#d5d9ec"
+    TXT="#1a1e2e";MUT="#6b7280";ACC="#e64a00";GRN="#00a882";BLU="#2563eb";WRN="#d97706"
+    PBG="#e8eaf2";PGR="#d2d6e8";SHD="rgba(0,0,0,.07)"
+    IBG="rgba(37,99,235,.06)";IBD="rgba(37,99,235,.25)"
+    OBG="rgba(0,168,130,.07)";OBD="rgba(0,168,130,.3)"
+    WBG="rgba(217,119,6,.06)";WBD="rgba(217,119,6,.25)"
 
-# ═══════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────
 # CSS
-# ═══════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
-
-html,body,[class*="css"],.stApp{{font-family:'Inter',sans-serif!important;background:{BG}!important;color:{TEXT}!important}}
-.block-container{{padding-top:1.2rem!important;padding-bottom:3rem!important;max-width:1300px!important}}
-
+html,body,[class*="css"],.stApp{{font-family:'Inter',sans-serif!important;background:{BG}!important;color:{TXT}!important}}
+.block-container{{padding-top:1rem!important;padding-bottom:3rem!important;max-width:1340px!important}}
 /* HEADER */
-.psp-header{{background:{SURFACE};border:1px solid {BORDER};border-radius:16px;padding:24px 32px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 16px {SHADOW}}}
-.psp-logo{{font-size:26px;font-weight:800;letter-spacing:-.5px;color:{TEXT}}}
-.psp-logo em{{color:{ACCENT};font-style:normal}}
-.psp-sub{{font-size:12px;color:{MUTED};margin-top:4px}}
-.psp-badge{{background:{ACCENT};color:white;font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:1px;text-transform:uppercase}}
-
-/* SECTION HEADERS */
-.sec-hdr{{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:{MUTED};padding:18px 0 10px;border-bottom:1px solid {BORDER};margin-bottom:14px}}
-.sec-num{{width:22px;height:22px;background:{ACCENT};color:white;border-radius:50%;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}}
-
-/* CARDS */
-.stat-card{{background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:14px 10px;text-align:center;box-shadow:0 1px 4px {SHADOW}}}
-.stat-card .lbl{{font-size:10px;font-weight:600;color:{MUTED};text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}}
-.stat-card .val{{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:{TEXT};line-height:1.3}}
-.stat-card .val.accent{{color:{ACCENT}}}
-.stat-card .val.green{{color:{GREEN}}}
-.stat-card .val.blue{{color:{BLUE}}}
-
-/* ALERT BOXES */
-.result-box{{background:{OK_BG};border:1.5px solid {OK_BD};border-radius:10px;padding:13px 16px;font-size:13px;color:{GREEN};margin:12px 0;line-height:1.6}}
-.info-box{{background:{INFO_BG};border:1.5px solid {INFO_BD};border-radius:10px;padding:12px 15px;font-size:13px;color:{BLUE};margin:10px 0 14px}}
-.warn-box{{background:{WARN_BG};border:1.5px solid {WARN_BD};border-radius:10px;padding:12px 15px;font-size:13px;color:{WARN};margin:10px 0}}
-
-/* CARD CONTAINER */
-.param-card{{background:{SURFACE};border:1px solid {BORDER};border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 1px 6px {SHADOW}}}
-
+.hdr{{background:{SRF};border:1px solid {BOR};border-radius:16px;padding:22px 32px;margin-bottom:22px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 16px {SHD}}}
+.hdr-logo{{font-size:26px;font-weight:800;color:{TXT};letter-spacing:-.5px}}
+.hdr-logo em{{color:{ACC};font-style:normal}}
+.hdr-sub{{font-size:12px;color:{MUT};margin-top:3px}}
+.badge{{background:{ACC};color:white;font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:1px;text-transform:uppercase}}
+/* SEC */
+.sec{{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:{MUT};padding:16px 0 9px;border-bottom:1px solid {BOR};margin-bottom:13px}}
+.sn{{width:21px;height:21px;background:{ACC};color:white;border-radius:50%;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}}
+/* STAT CARDS */
+.sc{{background:{SRF};border:1px solid {BOR};border-radius:11px;padding:13px 10px;text-align:center;box-shadow:0 1px 4px {SHD}}}
+.sc .l{{font-size:10px;font-weight:600;color:{MUT};text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px}}
+.sc .v{{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:{TXT};line-height:1.3}}
+.sc .v.a{{color:{ACC}}}.sc .v.g{{color:{GRN}}}.sc .v.b{{color:{BLU}}}
+/* BOXES */
+.rb{{background:{OBG};border:1.5px solid {OBD};border-radius:10px;padding:12px 15px;font-size:13px;color:{GRN};margin:11px 0;line-height:1.6}}
+.ib{{background:{IBG};border:1.5px solid {IBD};border-radius:10px;padding:11px 14px;font-size:13px;color:{BLU};margin:9px 0 13px}}
+.wb{{background:{WBG};border:1.5px solid {WBD};border-radius:10px;padding:11px 14px;font-size:13px;color:{WRN};margin:9px 0}}
+/* UPLOAD CARD */
+.up-card{{background:{SRF2};border:2px dashed {BOR};border-radius:12px;padding:16px;margin-bottom:8px;transition:border-color .2s}}
 /* TABS */
-.stTabs [data-baseweb="tab-list"]{{background:{SURFACE};border-radius:12px;padding:5px;gap:4px;border:1px solid {BORDER};box-shadow:0 1px 6px {SHADOW}}}
-.stTabs [data-baseweb="tab"]{{border-radius:9px!important;font-weight:600!important;font-size:14px!important;padding:10px 22px!important;color:{MUTED}!important;background:transparent!important;transition:all .2s!important}}
-.stTabs [aria-selected="true"]{{background:{ACCENT}!important;color:white!important}}
-
+.stTabs [data-baseweb="tab-list"]{{background:{SRF};border-radius:12px;padding:5px;gap:3px;border:1px solid {BOR};box-shadow:0 1px 6px {SHD}}}
+.stTabs [data-baseweb="tab"]{{border-radius:9px!important;font-weight:600!important;font-size:13px!important;padding:9px 18px!important;color:{MUT}!important;background:transparent!important;transition:all .2s!important}}
+.stTabs [aria-selected="true"]{{background:{ACC}!important;color:white!important}}
 /* INPUTS */
-.stNumberInput input,.stSelectbox select,.stTextInput input{{background:{SURFACE2}!important;border:1px solid {BORDER}!important;border-radius:8px!important;color:{TEXT}!important;font-size:14px!important}}
-
+.stNumberInput input,.stSelectbox select,.stTextInput input{{background:{SRF2}!important;border:1px solid {BOR}!important;border-radius:8px!important;color:{TXT}!important;font-size:14px!important}}
 /* SIDEBAR */
-[data-testid="stSidebar"]{{background:{SURFACE}!important;border-right:1px solid {BORDER}!important}}
-
+[data-testid="stSidebar"]{{background:{SRF}!important;border-right:1px solid {BOR}!important}}
 /* FILE UPLOADER */
-[data-testid="stFileUploader"]{{background:{SURFACE2}!important;border:2px dashed {BORDER}!important;border-radius:12px!important}}
-[data-testid="stFileUploader"]:hover{{border-color:{ACCENT}!important}}
-
+[data-testid="stFileUploader"]{{background:{SRF2}!important;border:2px dashed {BOR}!important;border-radius:12px!important}}
 /* BUTTONS */
-.stButton>button{{background:{ACCENT}!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:600!important;font-size:14px!important;padding:12px 28px!important;transition:all .2s!important;box-shadow:0 2px 8px rgba(255,92,26,.28)!important}}
+.stButton>button{{background:{ACC}!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:600!important;font-size:14px!important;padding:11px 24px!important;transition:all .2s!important;box-shadow:0 2px 8px rgba(255,92,26,.28)!important}}
 .stButton>button:hover{{transform:translateY(-1px)!important;box-shadow:0 4px 14px rgba(255,92,26,.38)!important}}
-.stDownloadButton>button{{background:{GREEN}!important;color:{'#061410' if DARK else 'white'}!important;border:none!important;border-radius:10px!important;font-weight:700!important;font-size:14px!important;padding:12px 28px!important;box-shadow:0 2px 8px rgba(0,200,160,.25)!important}}
-
-/* RADIO */
-.stRadio label{{font-size:13px!important;font-weight:500!important;color:{TEXT}!important}}
-hr{{border-color:{BORDER}!important;margin:18px 0!important}}
+.stDownloadButton>button{{background:{GRN}!important;color:{'#051210' if DARK else 'white'}!important;border:none!important;border-radius:10px!important;font-weight:700!important;padding:11px 24px!important;box-shadow:0 2px 8px rgba(0,200,160,.25)!important}}
+.stRadio label{{font-size:13px!important;font-weight:500!important;color:{TXT}!important}}
+hr{{border-color:{BOR}!important;margin:16px 0!important}}
 #MainMenu,footer,header{{visibility:hidden}}
-
-/* COLUMN DIVIDER */
-.col-divider{{width:1px;background:{BORDER};min-height:400px;margin:0 8px}}
+/* SLOT CARD (multi-image) */
+.slot-hdr{{background:{SRF};border:1px solid {BOR};border-radius:9px;padding:10px 14px;display:flex;align-items:center;gap:10px;margin-bottom:6px}}
+.slot-num{{width:28px;height:28px;background:{ACC};color:white;border-radius:6px;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}}
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════
-# CONSTANTES & FONCTIONS
-# ═══════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────
+# CONSTANTES & UTILITAIRES
+# ─────────────────────────────────────────────────────────
 INCH=39.3701; MMPI=25.4
 
-def sec(n,t): st.markdown(f'<div class="sec-hdr">{"<span class=sec-num>"+str(n)+"</span>" if n else ""}{t}</div>',unsafe_allow_html=True)
-def rbox(h):  st.markdown(f'<div class="result-box">{h}</div>',unsafe_allow_html=True)
-def ibox(h):  st.markdown(f'<div class="info-box">ℹ️ {h}</div>',unsafe_allow_html=True)
-def wbox(h):  st.markdown(f'<div class="warn-box">⚠️ {h}</div>',unsafe_allow_html=True)
-def scard(lbl,val,cls=""): return f'<div class="stat-card"><div class="lbl">{lbl}</div><div class="val {cls}">{val}</div></div>'
+def sec(n,t): st.markdown(f'<div class="sec">{"<span class=sn>"+str(n)+"</span>" if n else ""}{t}</div>',unsafe_allow_html=True)
+def rb(h): st.markdown(f'<div class="rb">{h}</div>',unsafe_allow_html=True)
+def ib(h): st.markdown(f'<div class="ib">ℹ️ {h}</div>',unsafe_allow_html=True)
+def wb(h): st.markdown(f'<div class="wb">⚠️ {h}</div>',unsafe_allow_html=True)
+def sc(l,v,c=""): return f'<div class="sc"><div class="l">{l}</div><div class="v {c}">{v}</div></div>'
 
 def px_m(m,d):   return max(1,int(m*INCH*d))
 def px_mm(mm,d): return max(1,int((mm/MMPI)*d))
-def est_tif(w,h): b=int(w*h*4*.38); return f"{b/1e6:.1f} MB" if b>=1e6 else f"{b/1024:.0f} KB"
+def est(w,h): b=int(w*h*4*.38); return f"{b/1e6:.1f} MB" if b>=1e6 else f"{b/1024:.0f} KB"
 
-def fnt(s=9):
-    try: return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",s)
-    except: return ImageFont.load_default()
-def fnt_mono(s=9):
-    try: return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",s)
-    except: return ImageFont.load_default()
-def h2rgb(h):
+def h2r(h):
     h=h.lstrip("#"); return tuple(int(h[i:i+2],16) for i in (0,2,4))
 
+def fnt(s=9):
+    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"]:
+        try: return ImageFont.truetype(p,s)
+        except: pass
+    return ImageFont.load_default()
+
+def fnt_m(s=9):
+    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"]:
+        try: return ImageFont.truetype(p,s)
+        except: pass
+    return ImageFont.load_default()
+
+# ─────────────────────────────────────────────────────────
+# CHARGEMENT IMAGE
+# ─────────────────────────────────────────────────────────
 def load_img(up) -> Image.Image:
     data=up.read(); up.seek(0)
-    if up.name.lower().endswith(".pdf") and HAS_MUPDF:
+    if up.name.lower().endswith(".pdf") and HAS_PDF:
         doc=fitz.open(stream=data,filetype="pdf")
         pix=doc[0].get_pixmap(matrix=fitz.Matrix(4,4),alpha=True)
         img=Image.frombytes("RGBA",[pix.width,pix.height],pix.samples)
@@ -158,112 +148,238 @@ def load_img(up) -> Image.Image:
     img=Image.open(io.BytesIO(data))
     return img.convert("RGBA") if img.mode!="RGBA" else img
 
+# ─────────────────────────────────────────────────────────
+# ENCODAGE TIF
+# ─────────────────────────────────────────────────────────
 def to_tif(img:Image.Image, dpi:int, comp:str) -> bytes:
-    if img.mode in ("RGBA","RGB"):
+    if img.mode=="RGBA":
         bg=Image.new("RGB",img.size,(255,255,255))
-        if img.mode=="RGBA": bg.paste(img.convert("RGB"),mask=img.split()[3])
-        else: bg=img
+        bg.paste(img.convert("RGB"),mask=img.split()[3])
         img=bg.convert("CMYK")
+    elif img.mode=="RGB":
+        img=img.convert("CMYK")
     buf=io.BytesIO(); img.save(buf,format="TIFF",dpi=(dpi,dpi),compression=comp)
     return buf.getvalue()
 
-def pmn(job:dict) -> str:
+# ─────────────────────────────────────────────────────────
+# PRN
+# ─────────────────────────────────────────────────────────
+def make_prn(j:dict)->str:
     now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return "\n".join([
-        "; PrintStudio Pro — Job PMN",f"; {now}","","[JobInfo]",
-        f"JobName={job.get('name','Job')}",f"Created={now}","","[Media]",
-        f"Width={job.get('w_mm',0):.2f}",f"Height={job.get('h_mm',0):.2f}",
-        "Unit=mm",f"Orientation={job.get('orient','portrait')}","","[Print]",
-        f"Copies={job.get('copies',1)}",f"DPI={job.get('dpi',300)}",
-        "ColorMode=CMYK",f"ColorProfile={job.get('icc','ISOcoated_v2')}",
-        f"Mirror={1 if job.get('mirror') else 0}",
-        f"WhiteBase={1 if job.get('wb') else 0}",
-        f"Bleed={job.get('bleed',0):.1f}","","[RIP]","Software=MainTap",
-        f"Quality={job.get('q','High')}","RenderIntent=Perceptual","","[Grid]",
-        f"Cols={job.get('cols',1)}",f"Rows={job.get('rows',1)}",
-        f"GapH={job.get('gh',0):.1f}",f"GapV={job.get('gv',0):.1f}",
-        f"Margin={job.get('mg',0):.1f}","","[Source]",
-        f"File={job.get('file','')}",f"Mode={job.get('mode','Standard')}",
+        "; PrintStudio Pro v4.0 — Fichier Job PRN",f"; Généré : {now}","",
+        "[JobInfo]",f"JobName={j.get('name','Job')}",f"Created={now}","",
+        "[Media]",f"Width={j.get('w',0):.2f}",f"Height={j.get('h',0):.2f}","Unit=mm",
+        f"Orientation={j.get('or','portrait')}","",
+        "[Print]",f"Copies={j.get('cop',1)}",f"DPI={j.get('dpi',300)}",
+        "ColorMode=CMYK",f"ColorProfile={j.get('icc','ISOcoated_v2')}",
+        f"Mirror={1 if j.get('mir') else 0}",f"WhiteBase={1 if j.get('wb') else 0}",
+        f"Bleed={j.get('bl',0):.1f}","",
+        "[RIP]","Software=MainTap",f"Quality={j.get('q','High')}","RenderIntent=Perceptual","",
+        "[Source]",f"File={j.get('file','')}",f"Mode={j.get('mode','Standard')}","",
+        "[Grid]",f"Cols={j.get('cols',1)}",f"Rows={j.get('rows',1)}",
+        f"GapH={j.get('gh',0):.1f}",f"GapV={j.get('gv',0):.1f}",f"Margin={j.get('mg',0):.1f}",
     ])
 
-def make_zip(files:dict) -> bytes:
+def make_zip(files:dict)->bytes:
     buf=io.BytesIO()
     with zipfile.ZipFile(buf,"w",zipfile.ZIP_DEFLATED) as z:
-        for n,d in files.items(): z.writestr(n,d)
+        for n,d in files.items(): z.writestr(n,d if isinstance(d,bytes) else d.encode())
     return buf.getvalue()
 
-# ── RIP GRAND FORMAT ────────────────────────────────────────
-def rip_gf(src,w_m,h_m,cols,rows,gh,gv,mg,bl,dpi,rot,icc,comp,kr,prog=None):
+# ─────────────────────────────────────────────────────────
+# SUPPRESSION DE FOND — AVANCÉE (OpenCV)
+# ─────────────────────────────────────────────────────────
+def remove_bg_advanced(img:Image.Image, method:str, tol:int, cpick:tuple,
+                        refine:bool, feather:int) -> Image.Image:
+    rgba = img.convert("RGBA")
+    arr  = np.array(rgba, dtype=np.uint8)
+    rgb  = arr[:,:,:3]
+
+    if method in ("Blanc","Noir","Couleur"):
+        if method=="Blanc":
+            r0,g0,b0=255,255,255
+        elif method=="Noir":
+            r0,g0,b0=0,0,0
+        else:
+            r0,g0,b0=cpick
+        dr=rgb[:,:,0].astype(np.float32)-r0
+        dg=rgb[:,:,1].astype(np.float32)-g0
+        db=rgb[:,:,2].astype(np.float32)-b0
+        dist=np.sqrt(dr**2+dg**2+db**2)
+        alpha_f=np.clip((dist-tol/3)/(tol-tol/3+1e-6),0,1)
+        alpha_u8=(alpha_f*255).astype(np.uint8)
+
+    elif method=="FloodFill (bords)":
+        # Supprime le fond connecté aux bords
+        gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
+        mask_ff=np.zeros((gray.shape[0]+2,gray.shape[1]+2),np.uint8)
+        img_ff=rgb.copy()
+        seed_points=[]
+        h,w=gray.shape
+        for x in range(0,w,max(1,w//20)): seed_points+=[(x,0),(x,h-1)]
+        for y in range(0,h,max(1,h//20)): seed_points+=[(0,y),(w-1,y)]
+        for sp in seed_points:
+            try: cv2.floodFill(img_ff,mask_ff,sp,(0,255,0),
+                               (tol,tol,tol),(tol,tol,tol),cv2.FLOODFILL_MASK_ONLY|cv2.FLOODFILL_FIXED_RANGE)
+            except: pass
+        fg_mask=1-(mask_ff[1:-1,1:-1])
+        alpha_u8=(fg_mask*255).astype(np.uint8)
+
+    elif method=="GrabCut (auto)":
+        # GrabCut : sépare sujet/fond automatiquement
+        mask_gc=np.zeros(rgb.shape[:2],np.uint8)
+        bgd=np.zeros((1,65),np.float64); fgd=np.zeros((1,65),np.float64)
+        marg=max(5,min(rgb.shape[0],rgb.shape[1])//15)
+        rect=(marg,marg,rgb.shape[1]-2*marg,rgb.shape[0]-2*marg)
+        try:
+            cv2.grabCut(rgb,mask_gc,rect,bgd,fgd,8,cv2.GC_INIT_WITH_RECT)
+            fg=(mask_gc==cv2.GC_FGD)|(mask_gc==cv2.GC_PR_FGD)
+            alpha_u8=(fg.astype(np.uint8)*255)
+        except:
+            alpha_u8=np.ones(rgb.shape[:2],np.uint8)*255
+
+    else:
+        alpha_u8=np.ones(rgb.shape[:2],np.uint8)*255
+
+    # Affinement bords (érosion légère puis dilat)
+    if refine:
+        kernel=np.ones((3,3),np.uint8)
+        alpha_u8=cv2.morphologyEx(alpha_u8,cv2.MORPH_OPEN,kernel,iterations=1)
+        alpha_u8=cv2.morphologyEx(alpha_u8,cv2.MORPH_CLOSE,kernel,iterations=2)
+
+    # Lissage bords (anti-aliasing)
+    if feather>0:
+        alpha_u8=cv2.GaussianBlur(alpha_u8,(feather*2+1,feather*2+1),feather*0.5)
+
+    out=arr.copy(); out[:,:,3]=alpha_u8
+    return Image.fromarray(out,"RGBA")
+
+# ─────────────────────────────────────────────────────────
+# MOTEUR RIP GRAND FORMAT
+# ─────────────────────────────────────────────────────────
+def rip_gf(slots, w_m, h_m, cols, rows, gh, gv, mg, bl,
+           dpi, rot_global, icc, comp, prog=None):
+    """
+    slots : liste de dict {img, rot, kr, x_off, y_off, scale}
+    Mode uniforme (1 image) ou multi-images (N images sur grille).
+    """
     def p(v,m):
         if prog: prog(v,m)
+
     p(5,"Calcul dimensions pixel…")
     wpx=px_m(w_m,dpi); hpx=px_m(h_m,dpi)
     mp=px_mm(mg,dpi); ghp=px_mm(gh,dpi); gvp=px_mm(gv,dpi)
     cw=max(1,(wpx-2*mp-ghp*(cols-1))//cols)
     ch=max(1,(hpx-2*mp-gvp*(rows-1))//rows)
-    p(18,f"Préparation source — {rot}°…")
-    s=src.convert("RGBA")
-    if rot: s=s.rotate(-rot,expand=True)
-    if kr:
-        r=s.width/s.height
-        cw2,ch2=(int(ch*r),ch) if cw/ch>r else (cw,int(cw/r))
-    else: cw2,ch2=cw,ch
-    s=s.resize((cw2,ch2),Image.LANCZOS)
-    p(35,"Création planche blanche…")
-    board=Image.new("RGB",(wpx,hpx),(255,255,255))
-    p(50,f"Placement {cols}×{rows}={cols*rows} éléments…")
-    alpha=s.split()[3] if s.mode=="RGBA" else None
-    sr=s.convert("RGB")
-    for r_ in range(rows):
-        for c_ in range(cols):
-            x=mp+c_*(cw+ghp)+(cw-cw2)//2
-            y=mp+r_*(ch+gvp)+(ch-ch2)//2
-            cb=Image.new("RGB",(cw2,ch2),(255,255,255))
-            cb.paste(sr,(0,0),alpha)
-            board.paste(cb,(x,y))
-    p(75,f"Conversion CMJN — {icc}…"); board=board.convert("CMYK")
-    p(90,f"Encodage TIF ({comp})…"); tif=to_tif(board,dpi,comp)
-    p(100,"✅ RIP terminé !")
-    return tif,{"wpx":wpx,"hpx":hpx,"cw_mm":(cw/dpi)*MMPI,"ch_mm":(ch/dpi)*MMPI,"total":cols*rows}
 
-# ── RIP DTF ─────────────────────────────────────────────────
-def rip_dtf(src,w_mm,h_mm,dpi,mirror,wb,comp,prog=None):
+    p(20,"Création de la planche…")
+    board=Image.new("RGB",(wpx,hpx),(255,255,255))
+
+    total=cols*rows
+    p(35,f"Placement {total} éléments…")
+
+    for idx in range(total):
+        r_=idx//cols; c_=idx%cols
+        x=mp+c_*(cw+ghp); y=mp+r_*(ch+gvp)
+
+        # Récupérer l'image du slot (cyclique si moins d'images que de cases)
+        slot=slots[idx%len(slots)]
+        src=slot["img"].convert("RGBA")
+
+        # Rotation individuelle ou globale
+        rot=slot.get("rot",0) or rot_global
+        if rot: src=src.rotate(-rot,expand=True)
+
+        # Fit dans la cellule
+        kr=slot.get("kr",False)
+        if kr:
+            r=src.width/src.height
+            cw2,ch2=(int(ch*r),ch) if cw/ch>r else (cw,int(cw/r))
+        else:
+            cw2,ch2=cw,ch
+
+        src=src.resize((cw2,ch2),Image.LANCZOS)
+        ox=x+(cw-cw2)//2; oy=y+(ch-ch2)//2
+        cell=Image.new("RGB",(cw2,ch2),(255,255,255))
+        alpha=src.split()[3]
+        cell.paste(src.convert("RGB"),(0,0),alpha)
+        board.paste(cell,(ox,oy))
+
+        pct=35+int(55*(idx+1)/total)
+        p(pct,f"Élément {idx+1}/{total} placé…")
+
+    p(92,f"Conversion CMJN — {icc}…"); board=board.convert("CMYK")
+    p(97,f"Encodage TIF ({comp})…"); tif=to_tif(board,dpi,comp)
+    p(100,"✅ RIP terminé !")
+    return tif,{"wpx":wpx,"hpx":hpx,
+                "cw_mm":(cw/dpi)*MMPI,"ch_mm":(ch/dpi)*MMPI,"total":total}
+
+# ─────────────────────────────────────────────────────────
+# MOTEUR RIP DTF
+# ─────────────────────────────────────────────────────────
+def rip_dtf_eng(src,w_mm,h_mm,dpi,mirror,comp,prog=None):
     def p(v,m):
         if prog: prog(v,m)
-    p(5,"Calcul zone DTF…")
-    wpx=px_mm(w_mm,dpi); hpx=px_mm(h_mm,dpi)
+    p(5,"Calcul zone DTF…"); wpx=px_mm(w_mm,dpi); hpx=px_mm(h_mm,dpi)
     p(20,"Mise en forme…"); s=src.convert("RGBA")
     if mirror: s=s.transpose(Image.FLIP_LEFT_RIGHT)
     r=s.width/s.height; t=wpx/hpx
     nw=wpx if r>t else int(hpx*r); nh=int(wpx/r) if r>t else hpx
     s=s.resize((nw,nh),Image.LANCZOS)
-    p(45,"Composition…"); base=Image.new("RGB",(wpx,hpx),(255,255,255))
+    p(50,"Composition sur fond…"); base=Image.new("RGB",(wpx,hpx),(255,255,255))
     ox=(wpx-nw)//2; oy=(hpx-nh)//2; al=s.split()[3]
     base.paste(s.convert("RGB"),(ox,oy),al)
-    p(70,"Conversion CMJN…"); cmyk=base.convert("CMYK")
-    p(88,"Encodage TIF…"); tif=to_tif(cmyk,dpi,comp)
-    p(100,"✅ RIP DTF terminé !")
-    return tif,{"wpx":wpx,"hpx":hpx}
+    p(75,"Conversion CMJN…"); cmyk=base.convert("CMYK")
+    p(92,"Encodage TIF…"); tif=to_tif(cmyk,dpi,comp)
+    p(100,"✅ RIP DTF terminé !"); return tif,{"wpx":wpx,"hpx":hpx}
 
-# ── SUPPRESSION FOND ────────────────────────────────────────
-def remove_bg(img:Image.Image, method:str, tol:int, cpick:tuple) -> Image.Image:
-    rgba=img.convert("RGBA"); arr=np.array(rgba,dtype=np.uint8)
-    if method=="Blanc":
-        mask=(arr[:,:,0].astype(int)+arr[:,:,1].astype(int)+arr[:,:,2].astype(int))>(765-tol*3)
-    elif method=="Noir":
-        mask=(arr[:,:,0].astype(int)+arr[:,:,1].astype(int)+arr[:,:,2].astype(int))<(tol*3)
-    else:
-        r0,g0,b0=cpick
-        dist=np.sqrt((arr[:,:,0].astype(int)-r0)**2+(arr[:,:,1].astype(int)-g0)**2+(arr[:,:,2].astype(int)-b0)**2)
-        mask=dist<tol
-    arr[mask,3]=0
-    return Image.fromarray(arr,"RGBA")
+# ─────────────────────────────────────────────────────────
+# APERÇU PLANCHE
+# ─────────────────────────────────────────────────────────
+def draw_preview(slots, cols, rows, w_m, h_m, gh, gv, mg, rot_g, pw=680):
+    ph=min(int(pw*h_m/w_m) if w_m>0 else pw,500); ph=max(ph,180)
+    board=Image.new("RGB",(pw,ph),h2r(PBG)); draw=ImageDraw.Draw(board)
+    gc=h2r(PGR)
+    for x in range(0,pw,28): draw.line([(x,0),(x,ph)],fill=gc,width=1)
+    for y in range(0,ph,28): draw.line([(0,y),(pw,y)],fill=gc,width=1)
+    sc_=pw/(w_m*1000); mp=int(mg*sc_); ghp=int(gh*sc_); gvp=int(gv*sc_)
+    uw=pw-2*mp-ghp*(cols-1); uh=ph-2*mp-gvp*(rows-1)
+    cw=max(2,uw//cols); ch=max(2,uh//rows)
+    pal=[(40,55,85),(35,62,72),(55,40,72),(60,48,36),(36,58,52),(52,52,42)] if DARK else \
+        [(215,228,252),(210,242,235),(235,218,248),(248,235,215),(215,237,228),(235,232,215)]
+    ac=h2r(ACC); total=cols*rows
+    for idx in range(total):
+        r_=idx//cols; c_=idx%cols
+        x=mp+c_*(cw+ghp); y=mp+r_*(ch+gvp)
+        cc=pal[idx%6]
+        slot=slots[idx%len(slots)] if slots else None
+        if slot and slot.get("img"):
+            s=slot["img"].copy().convert("RGBA")
+            rot=(slot.get("rot",0) or rot_g)
+            if rot: s=s.rotate(-rot,expand=True)
+            s=s.resize((cw,ch),Image.LANCZOS)
+            bg=Image.new("RGB",(cw,ch),cc)
+            bg.paste(s.convert("RGB"),(0,0),s.split()[3])
+            board.paste(bg,(x,y))
+        else:
+            draw.rectangle([x,y,x+cw-1,y+ch-1],fill=cc)
+        draw.rectangle([x,y,x+cw-1,y+ch-1],outline=ac,width=2)
+        fs=max(7,min(ch//3,14)); lbl=str(idx+1)
+        if slot and slot.get("label") and len(slots)>1: lbl=slot["label"][:6]
+        draw.text((x+cw//2,y+ch//2),lbl,fill=ac,font=fnt(fs),anchor="mm")
+    if mg>0:
+        wc=h2r(WRN); draw.rectangle([mp,mp,pw-mp-1,ph-mp-1],outline=(*wc,140),width=1)
+    draw.rectangle([0,ph-22,pw,ph],fill=h2r(SRF2))
+    draw.text((pw//2,ph-11),
+        f"Support {w_m:.3f}m × {h_m:.3f}m  ·  {cols}×{rows}={total} éléments  ·  CMJN TIF",
+        fill=h2r(ACC),font=fnt_m(9),anchor="mm")
+    return board
 
-# ── APERÇUS ─────────────────────────────────────────────────
-def prev_simple(src,w_mm,h_mm,rot,kr,pw=680):
-    ph=min(int(pw*h_mm/w_mm) if w_mm>0 else pw,520); ph=max(ph,160)
-    board=Image.new("RGB",(pw,ph),h2rgb(PREV_BG)); draw=ImageDraw.Draw(board)
-    gc=h2rgb(PREV_GRID)
+def draw_preview_simple(src,w_mm,h_mm,rot,kr,pw=680):
+    ph=min(int(pw*h_mm/w_mm) if w_mm>0 else pw,500); ph=max(ph,160)
+    board=Image.new("RGB",(pw,ph),h2r(PBG)); draw=ImageDraw.Draw(board)
+    gc=h2r(PGR)
     for x in range(0,pw,28): draw.line([(x,0),(x,ph)],fill=gc,width=1)
     for y in range(0,ph,28): draw.line([(0,y),(pw,y)],fill=gc,width=1)
     pad=24; iw,ih=pw-pad*2,ph-pad*2
@@ -276,62 +392,29 @@ def prev_simple(src,w_mm,h_mm,rot,kr,pw=680):
         else: iw2,ih2=iw,ih
         s=s.resize((iw2,ih2),Image.LANCZOS)
         ox=pad+(iw-iw2)//2; oy=pad+(ih-ih2)//2
-        bg=Image.new("RGB",(iw2,ih2),h2rgb(PREV_BG))
+        bg=Image.new("RGB",(iw2,ih2),h2r(PBG))
         bg.paste(s.convert("RGB"),(0,0),s.split()[3])
         board.paste(bg,(ox,oy))
-        ac=h2rgb(ACCENT)
+        ac=h2r(ACC)
         draw.rectangle([ox-2,oy-2,ox+iw2+1,oy+ih2+1],outline=ac,width=2)
-        draw.line([(ox,oy-14),(ox+iw2,oy-14)],fill=ac,width=1)
-        draw.line([(ox,oy-18),(ox,oy-10)],fill=ac,width=1); draw.line([(ox+iw2,oy-18),(ox+iw2,oy-10)],fill=ac,width=1)
-        draw.text(((ox+ox+iw2)//2,oy-14),f"{w_mm:.1f} mm",fill=ac,font=fnt(9),anchor="mm")
+        draw.line([(ox,oy-13),(ox+iw2,oy-13)],fill=ac,width=1)
+        draw.line([(ox,oy-17),(ox,oy-9)],fill=ac,width=1)
+        draw.line([(ox+iw2,oy-17),(ox+iw2,oy-9)],fill=ac,width=1)
+        draw.text(((ox+ox+iw2)//2,oy-13),f"{w_mm:.1f} mm",fill=ac,font=fnt(9),anchor="mm")
     else:
-        draw.rectangle([pad,pad,pw-pad,ph-pad],outline=h2rgb(BORDER),width=2)
-        draw.text((pw//2,ph//2),"Chargez une image",fill=h2rgb(MUTED),font=fnt(14),anchor="mm")
-    draw.rectangle([0,ph-22,pw,ph],fill=h2rgb(SURFACE2))
-    draw.text((pw//2,ph-11),f"{w_mm:.1f}×{h_mm:.1f} mm  |  {w_mm/10:.1f}×{h_mm/10:.1f} cm  |  {w_mm/1000:.3f}×{h_mm/1000:.3f} m",
-              fill=h2rgb(ACCENT),font=fnt_mono(9),anchor="mm")
+        draw.rectangle([pad,pad,pw-pad,ph-pad],outline=h2r(BOR),width=2)
+        draw.text((pw//2,ph//2),"Chargez une image",fill=h2r(MUT),font=fnt(14),anchor="mm")
+    draw.rectangle([0,ph-22,pw,ph],fill=h2r(SRF2))
+    draw.text((pw//2,ph-11),
+        f"{w_mm:.1f} × {h_mm:.1f} mm  ·  {w_mm/10:.1f} × {h_mm/10:.1f} cm  ·  {w_mm/1000:.3f} × {h_mm/1000:.3f} m",
+        fill=h2r(ACC),font=fnt_m(9),anchor="mm")
     return board
 
-def prev_grid(src,cols,rows,w_m,h_m,gh,gv,mg,rot,pw=680):
-    ph=min(int(pw*h_m/w_m) if w_m>0 else pw,520); ph=max(ph,180)
-    board=Image.new("RGB",(pw,ph),h2rgb(PREV_BG)); draw=ImageDraw.Draw(board)
-    gc=h2rgb(PREV_GRID)
-    for x in range(0,pw,28): draw.line([(x,0),(x,ph)],fill=gc,width=1)
-    for y in range(0,ph,28): draw.line([(0,y),(pw,y)],fill=gc,width=1)
-    sc=pw/(w_m*1000); mp=int(mg*sc); ghp=int(gh*sc); gvp=int(gv*sc)
-    uw=pw-2*mp-ghp*(cols-1); uh=ph-2*mp-gvp*(rows-1)
-    cw=max(2,uw//cols); ch=max(2,uh//rows)
-    ac=h2rgb(ACCENT)
-    pal=[(40,55,85),(35,60,70),(55,42,72),(60,48,36),(36,58,52),(52,52,42)] if DARK else \
-        [(218,230,252),(210,242,236),(236,222,248),(248,236,216),(215,237,228),(236,232,216)]
-    for r_ in range(rows):
-        for c_ in range(cols):
-            x=mp+c_*(cw+ghp); y=mp+r_*(ch+gvp)
-            cc=pal[(r_*cols+c_)%6]
-            if src:
-                s=src.copy().convert("RGBA")
-                if rot: s=s.rotate(-rot,expand=True)
-                s=s.resize((cw,ch),Image.LANCZOS)
-                bg=Image.new("RGB",(cw,ch),cc)
-                bg.paste(s.convert("RGB"),(0,0),s.split()[3])
-                board.paste(bg,(x,y))
-            else: draw.rectangle([x,y,x+cw-1,y+ch-1],fill=cc)
-            draw.rectangle([x,y,x+cw-1,y+ch-1],outline=ac,width=2)
-            fs=max(7,min(ch//3,15))
-            draw.text((x+cw//2,y+ch//2),str(r_*cols+c_+1),fill=ac,font=fnt(fs),anchor="mm")
-    if mg>0:
-        wc=h2rgb(WARN)
-        draw.rectangle([mp,mp,pw-mp-1,ph-mp-1],outline=(*wc,130),width=1)
-    draw.rectangle([0,ph-22,pw,ph],fill=h2rgb(SURFACE2))
-    draw.text((pw//2,ph-11),f"Support {w_m:.3f}×{h_m:.3f} m  |  {cols}×{rows}={cols*rows} éléments  |  CMJN TIF",
-              fill=h2rgb(ACCENT),font=fnt_mono(9),anchor="mm")
-    return board
-
-def prev_dtf(src,w_mm,h_mm,mirror,pw_max=320):
-    r=h_mm/w_mm if w_mm>0 else 1; ph=min(int(pw_max*r),460); pw=min(pw_max,int(ph/r)); ph=max(ph,180)
-    board=Image.new("RGB",(pw,ph),h2rgb(PREV_BG)); draw=ImageDraw.Draw(board)
+def draw_preview_dtf(src,w_mm,h_mm,mirror,pw=300):
+    r=h_mm/w_mm if w_mm>0 else 1; ph=min(int(pw*r),460); ph=max(ph,180)
+    board=Image.new("RGB",(pw,ph),h2r(PBG)); draw=ImageDraw.Draw(board)
     pad=10
-    draw.rectangle([pad,pad,pw-pad,ph-pad],fill=h2rgb(SURFACE2),outline=h2rgb(BORDER),width=1)
+    draw.rectangle([pad,pad,pw-pad,ph-pad],fill=h2r(SRF2),outline=h2r(BOR),width=1)
     if src:
         s=src.copy().convert("RGBA")
         if mirror: s=s.transpose(Image.FLIP_LEFT_RIGHT)
@@ -339,36 +422,53 @@ def prev_dtf(src,w_mm,h_mm,mirror,pw_max=320):
         nw=iw if rr>tt else int(ih*rr); nh=int(iw/rr) if rr>tt else ih
         s=s.resize((nw,nh),Image.LANCZOS)
         ox=pad*2+(iw-nw)//2; oy=pad*2+(ih-nh)//2
-        bg=Image.new("RGB",(nw,nh),h2rgb(SURFACE2))
+        bg=Image.new("RGB",(nw,nh),h2r(SRF2))
         bg.paste(s.convert("RGB"),(0,0),s.split()[3])
         board.paste(bg,(ox,oy))
-    else: draw.text((pw//2,ph//2),"Chargez un fichier",fill=h2rgb(MUTED),font=fnt(11),anchor="mm")
-    gc=h2rgb(GREEN); mk=14
+    else: draw.text((pw//2,ph//2),"Chargez un fichier",fill=h2r(MUT),font=fnt(11),anchor="mm")
+    gc=h2r(GRN); mk=14
     for (cx,cy) in [(pad,pad),(pw-pad,pad),(pad,ph-pad),(pw-pad,ph-pad)]:
         dx=1 if cx==pad else -1; dy=1 if cy==pad else -1
         draw.line([(cx,cy),(cx+dx*mk,cy)],fill=gc,width=2)
         draw.line([(cx,cy),(cx,cy+dy*mk)],fill=gc,width=2)
     if mirror:
-        draw.rectangle([pad,pad,pw-pad,pad+16],fill=h2rgb(SURFACE))
-        draw.text((pw//2,pad+8),"MIROIR",fill=h2rgb(ACCENT),font=fnt(9),anchor="mm")
-    draw.rectangle([0,ph-20,pw,ph],fill=h2rgb(SURFACE))
-    draw.text((pw//2,ph-10),f"{w_mm:.0f}×{h_mm:.0f} mm",fill=h2rgb(GREEN),font=fnt_mono(9),anchor="mm")
+        draw.rectangle([pad,pad,pw-pad,pad+16],fill=h2r(SRF))
+        draw.text((pw//2,pad+8),"🪞 MIROIR",fill=h2r(ACC),font=fnt(9),anchor="mm")
+    draw.rectangle([0,ph-20,pw,ph],fill=h2r(SRF))
+    draw.text((pw//2,ph-10),f"{w_mm:.0f}×{h_mm:.0f} mm",fill=h2r(GRN),font=fnt_m(9),anchor="mm")
     return board
+
+# ─────────────────────────────────────────────────────────
+# HELPER DIMENSIONS
+# ─────────────────────────────────────────────────────────
+def unit_cfg(unit,mode="wh"):
+    k={"mm":1.,"cm":10.,"m":1000.}
+    s={"mm":.5,"cm":.05,"m":.001}
+    dw={"mm":1500.,"cm":150.,"m":1.5}
+    dh={"mm":1000.,"cm":100.,"m":1.0}
+    return k[unit],s[unit],dw[unit],dh[unit]
+
+def unit_cfg_sup(unit):
+    k={"m":1.,"cm":.01,"mm":.001}
+    s={"m":.01,"cm":.5,"mm":1.}
+    dw={"m":1.5,"cm":150.,"mm":1500.}
+    dh={"m":1.0,"cm":100.,"mm":1000.}
+    return k[unit],s[unit],dw[unit],dh[unit]
 
 # ═══════════════════════════════════════════════════════════
 # HEADER
 # ═══════════════════════════════════════════════════════════
 st.markdown(f"""
-<div class="psp-header">
+<div class="hdr">
   <div>
-    <div class="psp-logo">Print<em>Studio</em> Pro</div>
-    <div class="psp-sub">Système RIP intégré · Grand Format · Vinyle · Bâche · DTF · Suppression de fond</div>
+    <div class="hdr-logo">Print<em>Studio</em> Pro</div>
+    <div class="hdr-sub">Système RIP professionnel · Grand Format · Vinyle · Bâche · DTF · Suppression de fond</div>
   </div>
-  <div style="display:flex;gap:8px;align-items:center">
-    <span class="psp-badge">CMJN</span>
-    <span class="psp-badge" style="background:{GREEN}">TIF</span>
-    <span class="psp-badge" style="background:{BLUE}">PMN</span>
-    <span class="psp-badge" style="background:{MUTED}">RIP v3</span>
+  <div style="display:flex;gap:7px;align-items:center">
+    <span class="badge">CMJN</span>
+    <span class="badge" style="background:{GRN}">TIF</span>
+    <span class="badge" style="background:{BLU}">PRN</span>
+    <span class="badge" style="background:{MUT}">v4.0</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -376,7 +476,7 @@ st.markdown(f"""
 # ═══════════════════════════════════════════════════════════
 # ONGLETS
 # ═══════════════════════════════════════════════════════════
-tab_gf, tab_dtf, tab_bg = st.tabs([
+TAB_GF, TAB_DTF, TAB_BG = st.tabs([
     "🖨️  Grand Format — Vinyle / Bâche",
     "👕  DTF — Textile",
     "✂️  Suppression de fond",
@@ -385,72 +485,138 @@ tab_gf, tab_dtf, tab_bg = st.tabs([
 # ╔═══════════════════════════════════════════════════════════
 # ║  ONGLET 1 — GRAND FORMAT
 # ╚═══════════════════════════════════════════════════════════
-with tab_gf:
+with TAB_GF:
 
-    col_params, col_preview = st.columns([1.05, 1], gap="large")
+    L, R = st.columns([1.05, 1], gap="large")
 
-    # ── COLONNE PARAMÈTRES ────────────────────────────────────
-    with col_params:
-
-        # 1. FICHIER
-        sec("1","Fichier source")
-        up = st.file_uploader(
-            "Logo, étiquette, maquette…",
-            type=["pdf","png","jpg","jpeg","tif","tiff","bmp","ai","eps","cdr","svg"],
-            key="gf_up", label_visibility="collapsed",
-        )
-        src_img = None
-        if up:
-            try: src_img = load_img(up)
-            except Exception as e: st.warning(f"Aperçu non disponible : {e}")
-            rbox(f"📂 <strong>{up.name}</strong> &nbsp;·&nbsp; {up.size/1024:.0f} KB"
-                 +(f" &nbsp;·&nbsp; {src_img.width}×{src_img.height} px" if src_img else ""))
-
-        # 2. MODE
-        sec("2","Type de travail")
-        mode = st.radio("Mode",
-            ["🖼️  Image simple","📏  Multiplication par planche","🏷️  Multiplication par étiquette"],
+    with L:
+        # ── 1. MODE ──────────────────────────────────────────
+        sec("1","Type de travail")
+        mode=st.radio("Mode",
+            ["🖼️ Image simple",
+             "📋 Plusieurs images différentes sur un support",
+             "📏 Répétition — par taille de support",
+             "🏷️ Répétition — par taille d'élément"],
             key="gf_mode", label_visibility="collapsed")
 
-        # 3. DIMENSIONS selon le mode
+        # ── 2. FICHIER(S) ─────────────────────────────────────
+        sec("2","Fichier(s) source")
+
+        if mode == "📋 Plusieurs images différentes sur un support":
+            ib("Chargez autant d'images que vous voulez placer sur le support. "
+               "Chaque image occupera une case de la grille dans l'ordre de chargement.")
+            ups=st.file_uploader("Chargez vos images (plusieurs à la fois)",
+                type=["pdf","png","jpg","jpeg","tif","tiff","bmp","ai","eps","svg"],
+                key="gf_multi", accept_multiple_files=True, label_visibility="collapsed")
+            slots=[]
+            if ups:
+                rb(f"📂 <strong>{len(ups)} fichier(s) chargé(s)</strong>")
+                for i,u in enumerate(ups):
+                    try:
+                        img=load_img(u)
+                        slots.append({"img":img,"label":Path(u.name).stem[:8],
+                                      "rot":0,"kr":True,"file":u.name})
+                    except: st.warning(f"❌ {u.name} — format non supporté")
+                if slots:
+                    st.markdown("**Paramètres par image :**")
+                    for i,slot in enumerate(slots):
+                        with st.expander(f"Image {i+1} — {slot['label']}", expanded=False):
+                            ec1,ec2=st.columns(2)
+                            with ec1:
+                                slot["rot"]=st.selectbox(f"Rotation",
+                                    [0,90,180,270],index=0,
+                                    format_func=lambda x:f"{x}°",key=f"slot_rot_{i}")
+                            with ec2:
+                                slot["kr"]=st.checkbox("Conserver proportions",
+                                    value=True,key=f"slot_kr_{i}")
+                            st.image(slot["img"],use_container_width=True,
+                                caption=f"{slot['img'].width}×{slot['img'].height} px")
+            up=None; src_img=None
+        else:
+            ups=[]
+            up=st.file_uploader("Logo, étiquette ou maquette",
+                type=["pdf","png","jpg","jpeg","tif","tiff","bmp","ai","eps","cdr","svg"],
+                key="gf_up", label_visibility="collapsed")
+            src_img=None
+            if up:
+                try: src_img=load_img(up)
+                except Exception as e: st.warning(f"Aperçu non disponible : {e}")
+                rb(f"📂 <strong>{up.name}</strong> · {up.size/1024:.0f} KB"
+                   +(f" · {src_img.width}×{src_img.height} px" if src_img else ""))
+            slots=[{"img":src_img,"rot":0,"kr":False,"label":"1","file":up.name if up else ""}] if src_img else []
+
+        # ── 3. DIMENSIONS ─────────────────────────────────────
         sec("3","Dimensions & Support")
 
-        # ─── IMAGE SIMPLE ─────────────────────────────────────
-        if mode == "🖼️  Image simple":
-            ibox("L'image est redimensionnée aux dimensions exactes indiquées, sans multiplication.")
-            unit = st.radio("Unité", ["mm","cm","m"], horizontal=True, key="si_u")
-            ku={"mm":1.,"cm":10.,"m":1000.}[unit]
-            dw={"mm":1500.,"cm":150.,"m":1.5}[unit]; dh={"mm":1000.,"cm":100.,"m":1.}[unit]
-            st_={"mm":.5,"cm":.05,"m":.001}[unit]
-            a,b_ = st.columns(2)
-            with a: iw_i=st.number_input(f"Largeur ({unit})",min_value=.1,value=dw,step=st_,key="si_w")
-            with b_: ih_i=st.number_input(f"Hauteur ({unit})",min_value=.1,value=dh,step=st_,key="si_h")
+        # IMAGE SIMPLE
+        if mode=="🖼️ Image simple":
+            ib("L'image est redimensionnée exactement aux dimensions indiquées — aucune multiplication.")
+            u=st.radio("Unité",["mm","cm","m"],horizontal=True,key="si_u")
+            ku,su,dw,dh=unit_cfg(u)
+            a,b_=st.columns(2)
+            with a: iw_i=st.number_input(f"Largeur ({u})",min_value=.1,value=dw,step=su,key="si_w")
+            with b_: ih_i=st.number_input(f"Hauteur ({u})",min_value=.1,value=dh,step=su,key="si_h")
             lbl_w=iw_i*ku; lbl_h=ih_i*ku
             c1,c2=st.columns(2)
-            with c1: kr=st.checkbox("🔗 Conserver les proportions",value=True,key="si_kr")
+            with c1: kr_si=st.checkbox("🔗 Conserver les proportions",value=True,key="si_kr")
             with c2: bleed=st.number_input("Fond perdu (mm)",min_value=0.,max_value=20.,value=0.,key="si_bl")
             print_w=lbl_w/1000; print_h=lbl_h/1000
             cols_v=1; rows_v=1; gh=0.; gv=0.; mg=0.
-            rbox(f"📐 Impression : <strong>{lbl_w:.1f} × {lbl_h:.1f} mm</strong>"
-                 f" &nbsp;({lbl_w/10:.1f} × {lbl_h/10:.1f} cm / {print_w:.3f} × {print_h:.3f} m)")
+            rot_g=st.selectbox("Rotation",[0,90,180,270],index=0,format_func=lambda x:f"{x}°",key="si_rot")
+            rb(f"📐 <strong>{lbl_w:.1f} × {lbl_h:.1f} mm</strong>"
+               f" · {lbl_w/10:.1f}×{lbl_h/10:.1f} cm · {print_w:.3f}×{print_h:.3f} m")
+            if slots: slots[0]["rot"]=rot_g; slots[0]["kr"]=kr_si
 
-        # ─── MULTIPLICATION PAR PLANCHE ───────────────────────
-        elif mode == "📏  Multiplication par planche":
-            ibox("Définissez la taille totale du support d'impression. La taille de chaque élément est calculée automatiquement.")
-
+        # PLUSIEURS IMAGES DIFFÉRENTES
+        elif mode=="📋 Plusieurs images différentes sur un support":
+            ib("Définissez le support et la grille. Chaque case reçoit une image différente dans l'ordre.")
             # Support
             st.markdown("**Support d'impression**")
-            unit_p=st.radio("Unité support",["m","cm","mm"],horizontal=True,key="pl_u")
-            kp={"m":1.,"cm":.01,"mm":.001}[unit_p]
-            dw_p={"m":1.5,"cm":150.,"mm":1500.}[unit_p]; dh_p={"m":1.,"cm":100.,"mm":1000.}[unit_p]
-            st_p={"m":.01,"cm":.5,"mm":1.}[unit_p]
+            u_p=st.radio("Unité support",["m","cm","mm"],horizontal=True,key="mi_us")
+            kp,sp,dwp,dhp=unit_cfg_sup(u_p)
             a,b_=st.columns(2)
-            with a: pw_i=st.number_input(f"Largeur support ({unit_p})",min_value=.01,value=dw_p,step=st_p,key="pl_w")
-            with b_: ph_i=st.number_input(f"Hauteur support ({unit_p})",min_value=.01,value=dh_p,step=st_p,key="pl_h")
+            with a: pw_i=st.number_input(f"Largeur ({u_p})",min_value=.01,value=dwp,step=sp,key="mi_pw")
+            with b_: ph_i=st.number_input(f"Hauteur ({u_p})",min_value=.01,value=dhp,step=sp,key="mi_ph")
             print_w=pw_i*kp; print_h=ph_i*kp
-
             # Grille
-            st.markdown("**Grille de multiplication**")
+            st.markdown("**Grille**")
+            g1,g2,g3,g4=st.columns(4)
+            with g1: cols_v=st.number_input("Colonnes",min_value=1,max_value=50,value=2,key="mi_c")
+            with g2: rows_v=st.number_input("Lignes",min_value=1,max_value=50,value=2,key="mi_r")
+            with g3: gh=st.number_input("Esp. H (mm)",min_value=0.,value=5.,step=.5,key="mi_gh")
+            with g4: gv=st.number_input("Esp. V (mm)",min_value=0.,value=5.,step=.5,key="mi_gv")
+            m1,m2=st.columns(2)
+            with m1: mg=st.number_input("Marge bord (mm)",min_value=0.,value=5.,key="mi_mg")
+            with m2: bleed=st.number_input("Fond perdu (mm)",min_value=0.,max_value=20.,value=0.,key="mi_bl")
+            rot_g=st.selectbox("Rotation globale",[0,90,180,270],index=0,format_func=lambda x:f"{x}°",key="mi_rot")
+            total_slots=int(cols_v)*int(rows_v)
+            uw=print_w*1000-2*mg-gh*(cols_v-1); uh=print_h*1000-2*mg-gv*(rows_v-1)
+            lbl_w=max(1.,uw/cols_v); lbl_h=max(1.,uh/rows_v)
+            if slots:
+                if len(slots)<total_slots:
+                    ib(f"{len(slots)} image(s) chargée(s) pour {total_slots} cases — "
+                       f"les images seront répétées en boucle pour remplir la grille.")
+                elif len(slots)>total_slots:
+                    ib(f"{len(slots)} images chargées, grille de {total_slots} cases — "
+                       f"seules les {total_slots} premières seront utilisées. Ajustez la grille si besoin.")
+                rb(f"🏷️ Case : <strong>{lbl_w:.1f}×{lbl_h:.1f} mm</strong> · "
+                   f"Support : <strong>{print_w:.3f}×{print_h:.3f} m</strong> · "
+                   f"{total_slots} cases")
+            else:
+                wb("Chargez des images dans la section fichier ci-dessus.")
+                lbl_w=100.; lbl_h=100.
+
+        # RÉPÉTITION PAR PLANCHE
+        elif mode=="📏 Répétition — par taille de support":
+            ib("Entrez la taille totale du support. La taille de chaque élément est calculée automatiquement.")
+            st.markdown("**Support d'impression**")
+            u_p=st.radio("Unité support",["m","cm","mm"],horizontal=True,key="pl_u")
+            kp,sp,dwp,dhp=unit_cfg_sup(u_p)
+            a,b_=st.columns(2)
+            with a: pw_i=st.number_input(f"Largeur ({u_p})",min_value=.01,value=dwp,step=sp,key="pl_pw")
+            with b_: ph_i=st.number_input(f"Hauteur ({u_p})",min_value=.01,value=dhp,step=sp,key="pl_ph")
+            print_w=pw_i*kp; print_h=ph_i*kp
+            st.markdown("**Grille de répétition**")
             g1,g2,g3,g4=st.columns(4)
             with g1: cols_v=st.number_input("Colonnes",min_value=1,max_value=100,value=3,key="pl_c")
             with g2: rows_v=st.number_input("Lignes",min_value=1,max_value=100,value=4,key="pl_r")
@@ -459,31 +625,27 @@ with tab_gf:
             m1,m2=st.columns(2)
             with m1: mg=st.number_input("Marge bord (mm)",min_value=0.,value=5.,key="pl_mg")
             with m2: bleed=st.number_input("Fond perdu (mm)",min_value=0.,max_value=20.,value=3.,key="pl_bl")
-            kr=st.checkbox("🔗 Conserver proportions de l'élément",value=False,key="pl_kr")
-
+            c1,c2=st.columns(2)
+            with c1: kr_pl=st.checkbox("🔗 Conserver proportions",value=False,key="pl_kr")
+            with c2: rot_g=st.selectbox("Rotation",[0,90,180,270],index=0,format_func=lambda x:f"{x}°",key="pl_rot")
             uw=print_w*1000-2*mg-gh*(cols_v-1); uh=print_h*1000-2*mg-gv*(rows_v-1)
             lbl_w=max(1.,uw/cols_v); lbl_h=max(1.,uh/rows_v)
-            rbox(f"🏷️ Taille calculée / élément : <strong>{lbl_w:.1f} × {lbl_h:.1f} mm</strong>"
-                 f" ({lbl_w/10:.2f} × {lbl_h/10:.2f} cm)"
-                 f" &nbsp;·&nbsp; <strong>{int(cols_v*rows_v)}</strong> éléments")
+            if slots: slots[0]["kr"]=kr_pl; slots[0]["rot"]=rot_g
+            rb(f"🏷️ Taille / élément : <strong>{lbl_w:.1f}×{lbl_h:.1f} mm</strong>"
+               f" ({lbl_w/10:.2f}×{lbl_h/10:.2f} cm) · <strong>{int(cols_v*rows_v)}</strong> éléments")
 
-        # ─── MULTIPLICATION PAR ÉTIQUETTE ─────────────────────
+        # RÉPÉTITION PAR ÉTIQUETTE
         else:
-            ibox("Définissez la taille d'un élément. Vous pouvez aussi imposer une taille de support fixe.")
-
-            # Taille de l'élément
+            ib("Entrez la taille d'un élément. La planche est calculée automatiquement. "
+               "Vous pouvez aussi imposer un support fixe.")
             st.markdown("**Taille de l'élément**")
-            unit_e=st.radio("Unité élément",["mm","cm","m"],horizontal=True,key="et_u")
-            ke={"mm":1.,"cm":10.,"m":1000.}[unit_e]
-            dw_e={"mm":100.,"cm":10.,"m":.1}[unit_e]; dh_e={"mm":50.,"cm":5.,"m":.05}[unit_e]
-            st_e={"mm":.5,"cm":.05,"m":.001}[unit_e]
+            u_e=st.radio("Unité élément",["mm","cm","m"],horizontal=True,key="et_u")
+            ke,se,dwe,dhe=unit_cfg(u_e)
             a,b_=st.columns(2)
-            with a: ew_i=st.number_input(f"Largeur élément ({unit_e})",min_value=.1,value=dw_e,step=st_e,key="et_w")
-            with b_: eh_i=st.number_input(f"Hauteur élément ({unit_e})",min_value=.1,value=dh_e,step=st_e,key="et_h")
+            with a: ew_i=st.number_input(f"Largeur ({u_e})",min_value=.1,value=dwe/15,step=se,key="et_w")
+            with b_: eh_i=st.number_input(f"Hauteur ({u_e})",min_value=.1,value=dhe/20,step=se,key="et_h")
             lbl_w=ew_i*ke; lbl_h=eh_i*ke
-
-            # Grille
-            st.markdown("**Grille de multiplication**")
+            st.markdown("**Grille de répétition**")
             g1,g2,g3,g4=st.columns(4)
             with g1: cols_v=st.number_input("Colonnes",min_value=1,max_value=100,value=3,key="et_c")
             with g2: rows_v=st.number_input("Lignes",min_value=1,max_value=100,value=4,key="et_r")
@@ -492,144 +654,163 @@ with tab_gf:
             m1,m2=st.columns(2)
             with m1: mg=st.number_input("Marge bord (mm)",min_value=0.,value=5.,key="et_mg")
             with m2: bleed=st.number_input("Fond perdu (mm)",min_value=0.,max_value=20.,value=3.,key="et_bl")
-            kr=st.checkbox("🔗 Conserver proportions",value=False,key="et_kr")
-
-            # Support d'impression
+            c1,c2=st.columns(2)
+            with c1: kr_et=st.checkbox("🔗 Conserver proportions",value=False,key="et_kr")
+            with c2: rot_g=st.selectbox("Rotation",[0,90,180,270],index=0,format_func=lambda x:f"{x}°",key="et_rot")
+            # Support optionnel
             st.markdown("**Support d'impression**")
-            force_sup=st.checkbox("📐 Imposer une taille de support spécifique",value=False,key="et_fs")
-            if force_sup:
-                unit_s=st.radio("Unité support",["m","cm","mm"],horizontal=True,key="et_su")
-                ks={"m":1.,"cm":.01,"mm":.001}[unit_s]
-                dw_s={"m":1.5,"cm":150.,"mm":1500.}[unit_s]; dh_s={"m":1.,"cm":100.,"mm":1000.}[unit_s]
-                st_s={"m":.01,"cm":.5,"mm":1.}[unit_s]
+            force=st.checkbox("📐 Imposer un support de taille fixe",value=False,key="et_fs")
+            if force:
+                u_s=st.radio("Unité support",["m","cm","mm"],horizontal=True,key="et_su")
+                ks,ss,dws,dhs=unit_cfg_sup(u_s)
                 fs1,fs2=st.columns(2)
-                with fs1: fsw=st.number_input(f"Largeur support ({unit_s})",min_value=.01,value=dw_s,step=st_s,key="et_fw")
-                with fs2: fsh=st.number_input(f"Hauteur support ({unit_s})",min_value=.01,value=dh_s,step=st_s,key="et_fh")
+                with fs1: fsw=st.number_input(f"Largeur ({u_s})",min_value=.01,value=dws,step=ss,key="et_fw")
+                with fs2: fsh=st.number_input(f"Hauteur ({u_s})",min_value=.01,value=dhs,step=ss,key="et_fh")
                 print_w=fsw*ks; print_h=fsh*ks
-                ibox(f"Support imposé : <strong>{print_w:.3f} m × {print_h:.3f} m</strong>. Les éléments sont placés selon la grille ; l'espace restant sera blanc.")
+                ib(f"Support imposé : <strong>{print_w:.3f}×{print_h:.3f} m</strong>. "
+                   "L'espace non couvert restera blanc.")
             else:
                 print_w=(lbl_w*cols_v+gh*(cols_v-1)+2*mg)/1000
                 print_h=(lbl_h*rows_v+gv*(rows_v-1)+2*mg)/1000
+            if slots: slots[0]["kr"]=kr_et; slots[0]["rot"]=rot_g
+            rb(f"📏 Support : <strong>{print_w:.3f}×{print_h:.3f} m</strong>"
+               f" ({print_w*100:.1f}×{print_h*100:.1f} cm)"
+               f" · <strong>{int(cols_v*rows_v)}</strong> éléments de {lbl_w:.1f}×{lbl_h:.1f} mm")
 
-            rbox(f"📏 Support : <strong>{print_w:.3f} m × {print_h:.3f} m</strong>"
-                 f" ({print_w*100:.1f} × {print_h*100:.1f} cm)"
-                 f" &nbsp;·&nbsp; <strong>{int(cols_v*rows_v)}</strong> éléments"
-                 f" de {lbl_w:.1f}×{lbl_h:.1f} mm")
-
-        # 4. PARAMÈTRES RIP
+        # ── 4. PARAMÈTRES RIP ─────────────────────────────────
         sec("4","Paramètres RIP")
         r1,r2,r3,r4=st.columns(4)
         with r1: dpi=st.selectbox("DPI",[72,150,300,600],index=2,key="gf_dpi")
-        with r2: rot=st.selectbox("Rotation",[0,90,180,270],index=0,format_func=lambda x:f"{x}°",key="gf_rot")
-        with r3: icc=st.selectbox("Profil ICC",["ISOcoated_v2","CoatedFOGRA39","UncoatedFOGRA29","SWOP"],key="gf_icc")
-        with r4: comp=st.selectbox("Compression TIF",
-                    {"tiff_lzw":"LZW (recommandé)","tiff_deflate":"Deflate","raw":"Aucune"}.keys(),
-                    format_func={"tiff_lzw":"LZW (recommandé)","tiff_deflate":"Deflate","raw":"Aucune"}.get,
-                    key="gf_comp")
+        with r2: icc=st.selectbox("Profil ICC",["ISOcoated_v2","CoatedFOGRA39","UncoatedFOGRA29","SWOP"],key="gf_icc")
+        with r3: comp=st.selectbox("Compression",{"tiff_lzw":"LZW ✓","tiff_deflate":"Deflate","raw":"Aucune"}.keys(),
+                    format_func={"tiff_lzw":"LZW ✓","tiff_deflate":"Deflate","raw":"Aucune"}.get,key="gf_comp")
+        with r4: copies=st.number_input("Copies",min_value=1,max_value=99,value=1,key="gf_cop")
 
-        # 5. FORMAT DE SORTIE
+        # ── 5. SORTIE ─────────────────────────────────────────
         sec("5","Format de sortie")
-        out=st.radio("Sortie",["tif","pmn","zip","zip_full"],
-            format_func={"tif":"🖼️ TIF CMJN","pmn":"🖨️ PMN","zip":"📦 TIF + PMN","zip_full":"📦 ZIP + aperçu"}.get,
-            horizontal=True, key="gf_out")
+        out=st.radio("Sortie",["tif","prn","zip","zip_full"],
+            format_func={"tif":"🖼️ TIF CMJN","prn":"🖨️ PRN","zip":"📦 TIF+PRN","zip_full":"📦 ZIP+aperçu"}.get,
+            horizontal=True,key="gf_out")
 
-    # ── COLONNE DROITE — STATS & APERÇU ──────────────────────
-    with col_preview:
+    # ── COLONNE DROITE ─────────────────────────────────────
+    with R:
         sec("","Récapitulatif & Aperçu")
-
-        wpx=px_m(print_w,dpi); hpx=px_m(print_h,dpi); total=int(cols_v)*int(rows_v)
-        a,b_,c_=st.columns(3)
-        a.markdown(scard("Éléments",str(total),"accent"),unsafe_allow_html=True)
-        b_.markdown(scard("Taille élément",f"{lbl_w:.0f}×{lbl_h:.0f} mm"),unsafe_allow_html=True)
-        c_.markdown(scard("Support",f"{print_w:.2f}×{print_h:.2f} m"),unsafe_allow_html=True)
+        wpx=px_m(print_w,dpi); hpx=px_m(print_h,dpi)
+        total=int(cols_v)*int(rows_v)
+        a_,b_,c_=st.columns(3)
+        a_.markdown(sc("Éléments",str(total),"a"),unsafe_allow_html=True)
+        b_.markdown(sc("Taille élément",f"{lbl_w:.0f}×{lbl_h:.0f} mm"),unsafe_allow_html=True)
+        c_.markdown(sc("Support",f"{print_w:.2f}×{print_h:.2f} m"),unsafe_allow_html=True)
         st.markdown("")
-        d,e=st.columns(2)
-        d.markdown(scard("Pixels totaux",f"{wpx:,}×{hpx:,}","blue"),unsafe_allow_html=True)
-        e.markdown(scard("TIF estimé",est_tif(wpx,hpx),"green"),unsafe_allow_html=True)
-
+        d_,e_=st.columns(2)
+        d_.markdown(sc("Pixels",f"{wpx:,}×{hpx:,}","b"),unsafe_allow_html=True)
+        e_.markdown(sc("TIF estimé",est(wpx,hpx),"g"),unsafe_allow_html=True)
         st.markdown("")
 
-        # Aperçu visuel
-        if mode=="🖼️  Image simple":
-            pv=prev_simple(src_img,lbl_w,lbl_h,rot,kr)
+        # Aperçu
+        has_any = (mode=="📋 Plusieurs images différentes sur un support" and slots) or \
+                  (mode!="📋 Plusieurs images différentes sur un support" and src_img)
+
+        if mode=="🖼️ Image simple":
+            rot_g_si = rot_g if 'rot_g' in dir() else 0
+            kr_si_v  = kr_si if 'kr_si' in dir() else True
+            pv=draw_preview_simple(src_img,lbl_w,lbl_h,rot_g_si,kr_si_v)
             st.image(pv,use_container_width=True,caption=f"Image : {lbl_w:.1f}×{lbl_h:.1f} mm")
         else:
-            pv=prev_grid(src_img,int(cols_v),int(rows_v),print_w,print_h,gh,gv,mg,rot)
-            st.image(pv,use_container_width=True,
-                caption=f"{int(cols_v)}×{int(rows_v)} éléments — {lbl_w:.1f}×{lbl_h:.1f} mm — Support {print_w:.3f}×{print_h:.3f} m")
+            pv=draw_preview(slots,int(cols_v),int(rows_v),
+                            print_w,print_h,gh,gv,mg,
+                            rot_g if 'rot_g' in dir() else 0)
+            cap=f"{int(cols_v)}×{int(rows_v)} éléments · Support {print_w:.3f}×{print_h:.3f} m"
+            st.image(pv,use_container_width=True,caption=cap)
 
         st.markdown("")
-
-        # Bouton RIP
-        if not up:
-            wbox("Chargez un fichier source pour lancer le RIP.")
+        has_files = (mode=="📋 Plusieurs images différentes sur un support" and slots) or \
+                    (mode!="📋 Plusieurs images différentes sur un support" and up and src_img)
+        if not has_files:
+            wb("Chargez un fichier source pour lancer le RIP.")
         else:
-            lbl_btn={"🖼️  Image simple":"🚀 Lancer RIP — Image simple CMJN",
-                     "📏  Multiplication par planche":"🚀 Lancer RIP — Planche avec multiplication",
-                     "🏷️  Multiplication par étiquette":"🚀 Lancer RIP — Planche avec multiplication"}[mode]
-            if st.button(lbl_btn,type="primary",use_container_width=True,key="gf_rip"):
+            if st.button("🚀  Lancer RIP — Générer fichier prêt à imprimer",
+                         type="primary",use_container_width=True,key="gf_rip"):
                 try:
-                    prog=st.progress(0); stat=st.empty()
-                    def cb(v,m): prog.progress(int(v)); stat.markdown(f"**⚙️ {m}**")
-                    src2=src_img or load_img(up)
+                    pg=st.progress(0); st_msg=st.empty()
+                    def cb(v,m): pg.progress(int(v)); st_msg.markdown(f"**⚙️ {m}**")
+
+                    # Recalc hauteur si image simple + proportions
                     ph_rip=print_h
-                    if mode=="🖼️  Image simple" and kr and src2:
-                        ph_rip=print_w/(src2.width/src2.height)
-                    tif_b,info=rip_gf(src2,print_w,ph_rip,int(cols_v),int(rows_v),gh,gv,mg,bleed,dpi,rot,icc,comp,kr,cb)
-                    ts=datetime.now().strftime("%Y%m%d_%H%M"); bn=Path(up.name).stem
-                    if mode=="🖼️  Image simple":
+                    if mode=="🖼️ Image simple" and kr_si and src_img:
+                        ph_rip=print_w/(src_img.width/src_img.height)
+
+                    rot_used=rot_g if 'rot_g' in dir() else 0
+                    tif_b,info=rip_gf(slots,print_w,ph_rip,
+                        int(cols_v),int(rows_v),gh,gv,mg,bleed,
+                        dpi,rot_used,icc,comp,cb)
+
+                    ts=datetime.now().strftime("%Y%m%d_%H%M")
+                    if mode in ("📋 Plusieurs images différentes sur un support",):
+                        bn=f"multi_{len(slots)}images"
+                    else:
+                        bn=Path(up.name).stem
+                    if mode=="🖼️ Image simple":
                         fn_tif=f"{bn}_{lbl_w:.0f}x{lbl_h:.0f}mm_{dpi}dpi_CMJN_{ts}.tif"
                     else:
                         fn_tif=f"{bn}_elem{lbl_w:.0f}x{lbl_h:.0f}mm_sup{print_w:.2f}x{print_h:.2f}m_{int(cols_v)}x{int(rows_v)}_{dpi}dpi_CMJN_{ts}.tif"
-                    fn_pmn=fn_tif.replace(".tif",".pmn")
-                    job={"name":bn,"w_mm":print_w*1000,"h_mm":ph_rip*1000,
-                         "orient":"landscape" if print_w>ph_rip else "portrait",
-                         "copies":1,"dpi":dpi,"icc":icc,"mirror":False,"wb":False,
-                         "bleed":bleed,"cols":int(cols_v),"rows":int(rows_v),
-                         "gh":gh,"gv":gv,"mg":mg,"file":up.name,"mode":mode,"q":"High"}
-                    pmn_b=pmn(job).encode()
-                    stat.markdown("**✅ RIP terminé !**")
-                    rbox(f"✅ <strong>RIP terminé !</strong> &nbsp;·&nbsp; {info['wpx']:,}×{info['hpx']:,} px &nbsp;·&nbsp; TIF {len(tif_b)/1e6:.1f} MB")
-                    if out=="tif": st.download_button("⬇️ Télécharger TIF CMJN",tif_b,fn_tif,"image/tiff",use_container_width=True)
-                    elif out=="pmn": st.download_button("⬇️ Télécharger PMN",pmn_b,fn_pmn,"text/plain",use_container_width=True)
+                    fn_prn=fn_tif.replace(".tif",".prn")
+
+                    job={"name":bn,"w":print_w*1000,"h":ph_rip*1000,
+                         "or":"landscape" if print_w>ph_rip else "portrait",
+                         "cop":copies,"dpi":dpi,"icc":icc,"mir":False,"wb":False,
+                         "bl":bleed,"cols":int(cols_v),"rows":int(rows_v),
+                         "gh":gh,"gv":gv,"mg":mg,
+                         "file":up.name if up else "multi","mode":mode,"q":"High"}
+                    prn_b=make_prn(job).encode()
+
+                    st_msg.markdown("**✅ RIP terminé !**")
+                    rb(f"✅ <strong>RIP terminé !</strong> · "
+                       f"{info['wpx']:,}×{info['hpx']:,} px · "
+                       f"TIF CMJN : {len(tif_b)/1e6:.1f} MB")
+
+                    if out=="tif":
+                        st.download_button("⬇️ Télécharger TIF CMJN",tif_b,fn_tif,"image/tiff",use_container_width=True)
+                    elif out=="prn":
+                        st.download_button("⬇️ Télécharger PRN",prn_b,fn_prn,"text/plain",use_container_width=True)
                     else:
-                        files={fn_tif:tif_b,fn_pmn:pmn_b}
+                        files={fn_tif:tif_b,fn_prn:prn_b}
                         if out=="zip_full":
-                            buf=io.BytesIO(); pv.save(buf,"PNG"); files[f"{bn}_apercu.png"]=buf.getvalue()
+                            buf=io.BytesIO(); pv.save(buf,"PNG")
+                            files[f"{bn}_apercu.png"]=buf.getvalue()
                         zb=make_zip(files)
-                        st.download_button("⬇️ Télécharger ZIP complet",zb,fn_tif.replace(".tif","_COMPLET.zip"),"application/zip",use_container_width=True)
+                        fn_zip=fn_tif.replace(".tif","_COMPLET.zip")
+                        st.download_button("⬇️ Télécharger ZIP",zb,fn_zip,"application/zip",use_container_width=True)
                         da,db=st.columns(2)
                         da.download_button("⬇️ TIF seul",tif_b,fn_tif,"image/tiff")
-                        db.download_button("⬇️ PMN seul",pmn_b,fn_pmn,"text/plain")
-                except Exception as e: st.error(f"❌ Erreur : {e}"); st.exception(e)
+                        db.download_button("⬇️ PRN seul",prn_b,fn_prn,"text/plain")
+                except Exception as e: st.error(f"❌ Erreur RIP : {e}"); st.exception(e)
 
 
 # ╔═══════════════════════════════════════════════════════════
 # ║  ONGLET 2 — DTF
 # ╚═══════════════════════════════════════════════════════════
-with tab_dtf:
-
-    dl, dr = st.columns([1.05, 1], gap="large")
-
-    with dl:
+with TAB_DTF:
+    DL,DR=st.columns([1.05,1],gap="large")
+    with DL:
         sec("1","Fichier source")
         up_d=st.file_uploader("Chargez votre fichier DTF",
             type=["pdf","png","jpg","jpeg","tif","tiff","ai","eps","bmp","svg"],
-            key="dtf_up", label_visibility="collapsed")
+            key="dtf_up",label_visibility="collapsed")
         src_d=None
         if up_d:
             try: src_d=load_img(up_d)
             except Exception as e: st.warning(f"Aperçu non disponible : {e}")
-            rbox(f"📂 <strong>{up_d.name}</strong> &nbsp;·&nbsp; {up_d.size/1024:.0f} KB")
+            rb(f"📂 <strong>{up_d.name}</strong> · {up_d.size/1024:.0f} KB")
 
         sec("2","Format & Dimensions")
         fmt=st.radio("Format",["A4","A3","A2","A1","Personnalisé"],horizontal=True,key="dtf_fmt")
         DIMS={"A4":(210,297),"A3":(297,420),"A2":(420,594),"A1":(594,841)}
         if fmt=="Personnalisé":
             dc1,dc2=st.columns(2)
-            with dc1: cw_=st.number_input("Largeur (mm)",min_value=10.,value=300.,key="dtf_cw")
-            with dc2: ch_=st.number_input("Hauteur (mm)",min_value=10.,value=400.,key="dtf_ch")
-            dtf_w,dtf_h=float(cw_),float(ch_)
+            with dc1: cw_d=st.number_input("Largeur (mm)",min_value=10.,value=300.,key="dtf_cw")
+            with dc2: ch_d=st.number_input("Hauteur (mm)",min_value=10.,value=400.,key="dtf_ch")
+            dtf_w,dtf_h=float(cw_d),float(ch_d)
         else:
             bw,bh=DIMS[fmt]
             ori=st.radio("Orientation",["Portrait","Paysage"],horizontal=True,key="dtf_or")
@@ -638,30 +819,28 @@ with tab_dtf:
         sec("3","Paramètres d'impression")
         dp1,dp2=st.columns(2)
         with dp1:
-            dtf_dpi=st.selectbox("Résolution DPI",[150,300,600,1200],index=1,key="dtf_dpi")
-            dtf_col=st.selectbox("Mode couleur",{"cmyk":"CMJN (standard)","rgb":"RVB"}.keys(),
-                        format_func={"cmyk":"CMJN (standard)","rgb":"RVB"}.get,key="dtf_col")
-            dtf_comp=st.selectbox("Compression TIF",{"tiff_lzw":"LZW","tiff_deflate":"Deflate","raw":"Aucune"}.keys(),
-                        format_func={"tiff_lzw":"LZW","tiff_deflate":"Deflate","raw":"Aucune"}.get,key="dtf_comp")
+            dtf_dpi=st.selectbox("DPI",[150,300,600,1200],index=1,key="dtf_dpi")
+            dtf_comp=st.selectbox("Compression",{"tiff_lzw":"LZW ✓","tiff_deflate":"Deflate","raw":"Aucune"}.keys(),
+                        format_func={"tiff_lzw":"LZW ✓","tiff_deflate":"Deflate","raw":"Aucune"}.get,key="dtf_comp")
+            dtf_q=st.selectbox("Qualité RIP",["Draft","Normal","High","Ultra"],index=2,key="dtf_q")
         with dp2:
             dtf_mir=st.toggle("🪞 Miroir (face intérieure)",value=False,key="dtf_mir")
             dtf_wb=st.toggle("⬜ White underbase",value=True,key="dtf_wb")
             dtf_cop=st.number_input("Copies",min_value=1,max_value=999,value=1,key="dtf_cop")
-            dtf_q=st.selectbox("Qualité RIP",["Draft","Normal","High","Ultra"],index=2,key="dtf_q")
 
         sec("4","Format de sortie")
-        dtf_out=st.radio("Sortie DTF",["tif","pmn","zip"],
-            format_func={"tif":"🖼️ TIF CMJN","pmn":"🖨️ PMN","zip":"📦 ZIP complet"}.get,
+        dtf_out=st.radio("Sortie",["tif","prn","zip"],
+            format_func={"tif":"🖼️ TIF CMJN","prn":"🖨️ PRN","zip":"📦 ZIP complet"}.get,
             horizontal=True,key="dtf_out",index=2)
 
-    with dr:
+    with DR:
         sec("","Récapitulatif & Aperçu")
         wpx_d=px_mm(dtf_w,dtf_dpi); hpx_d=px_mm(dtf_h,dtf_dpi)
-        e1,e2,e3,e4=st.columns(4)
-        e1.markdown(scard("Format",fmt,"accent"),unsafe_allow_html=True)
-        e2.markdown(scard("Dimensions",f"{dtf_w:.0f}×{dtf_h:.0f} mm"),unsafe_allow_html=True)
-        e3.markdown(scard("DPI",str(dtf_dpi),"blue"),unsafe_allow_html=True)
-        e4.markdown(scard("TIF estimé",est_tif(wpx_d,hpx_d),"green"),unsafe_allow_html=True)
+        e1,e2=st.columns(2); e3,e4=st.columns(2)
+        e1.markdown(sc("Format",fmt,"a"),unsafe_allow_html=True)
+        e2.markdown(sc("Dimensions",f"{dtf_w:.0f}×{dtf_h:.0f} mm"),unsafe_allow_html=True)
+        e3.markdown(sc("DPI",str(dtf_dpi),"b"),unsafe_allow_html=True)
+        e4.markdown(sc("TIF estimé",est(wpx_d,hpx_d),"g"),unsafe_allow_html=True)
         st.markdown("")
         st.markdown(f"""
 | Paramètre | Valeur |
@@ -669,129 +848,178 @@ with tab_dtf:
 | Format | `{fmt}` |
 | Dimensions | `{dtf_w:.0f} × {dtf_h:.0f} mm` |
 | DPI | `{dtf_dpi}` → `{wpx_d:,} × {hpx_d:,} px` |
-| Mode couleur | `{"CMJN" if dtf_col=="cmyk" else "RVB"}` |
 | Miroir | `{"Oui ✅" if dtf_mir else "Non"}` |
 | White underbase | `{"Oui ✅" if dtf_wb else "Non"}` |
-| Copies | `{dtf_cop}` |
-| Qualité | `{dtf_q}` |
+| Copies | `{dtf_cop}` · Qualité `{dtf_q}` |
 """)
-        pv_d=prev_dtf(src_d,dtf_w,dtf_h,dtf_mir)
+        pv_d=draw_preview_dtf(src_d,dtf_w,dtf_h,dtf_mir)
         st.image(pv_d,caption=f"DTF {fmt} — {dtf_w:.0f}×{dtf_h:.0f} mm")
         st.markdown("")
         if not up_d:
-            wbox("Chargez un fichier pour lancer le RIP DTF.")
+            wb("Chargez un fichier pour lancer le RIP DTF.")
         else:
-            ibox("TIF CMJN + PMN générés en une seule passe — prêts pour MainTap.")
-            if st.button("🚀 Lancer RIP DTF — Générer & Imprimer",type="primary",use_container_width=True,key="dtf_rip"):
+            ib("TIF CMJN + PRN générés en une passe — prêts pour impression.")
+            if st.button("🚀 Lancer RIP DTF",type="primary",use_container_width=True,key="dtf_rip"):
                 try:
-                    pg=st.progress(0); st_=st.empty()
-                    def cbd(v,m): pg.progress(int(v)); st_.markdown(f"**⚙️ {m}**")
+                    pg=st.progress(0); sm=st.empty()
+                    def cbd(v,m): pg.progress(int(v)); sm.markdown(f"**⚙️ {m}**")
                     s2=src_d or load_img(up_d)
-                    tif_d,inf_d=rip_dtf(s2,dtf_w,dtf_h,dtf_dpi,dtf_mir,dtf_wb,dtf_comp,cbd)
+                    tif_d,inf_d=rip_dtf_eng(s2,dtf_w,dtf_h,dtf_dpi,dtf_mir,dtf_comp,cbd)
                     ts=datetime.now().strftime("%Y%m%d_%H%M"); bn=Path(up_d.name).stem
-                    fn_td=f"{bn}_DTF_{fmt}_{dtf_dpi}dpi_CMJN_{ts}.tif"; fn_pd=fn_td.replace(".tif",".pmn")
-                    job_d={"name":bn,"w_mm":dtf_w,"h_mm":dtf_h,
-                           "orient":"portrait" if dtf_h>=dtf_w else "landscape",
-                           "copies":dtf_cop,"dpi":dtf_dpi,"icc":"DTF_CMYK",
-                           "mirror":dtf_mir,"wb":dtf_wb,"bleed":0,
+                    fn_td=f"{bn}_DTF_{fmt}_{dtf_dpi}dpi_CMJN_{ts}.tif"
+                    fn_prd=fn_td.replace(".tif",".prn")
+                    job_d={"name":bn,"w":dtf_w,"h":dtf_h,
+                           "or":"portrait" if dtf_h>=dtf_w else "landscape",
+                           "cop":dtf_cop,"dpi":dtf_dpi,"icc":"DTF_CMYK",
+                           "mir":dtf_mir,"wb":dtf_wb,"bl":0,
                            "cols":1,"rows":1,"gh":0,"gv":0,"mg":0,
                            "file":up_d.name,"mode":"DTF","q":dtf_q}
-                    pmn_d=pmn(job_d).encode()
-                    st_.markdown("**✅ RIP DTF terminé !**")
-                    rbox(f"✅ <strong>RIP DTF terminé !</strong> &nbsp;·&nbsp; {inf_d['wpx']:,}×{inf_d['hpx']:,} px &nbsp;·&nbsp; {len(tif_d)/1e6:.1f} MB")
+                    prn_d=make_prn(job_d).encode()
+                    sm.markdown("**✅ RIP DTF terminé !**")
+                    rb(f"✅ <strong>RIP DTF !</strong> · {inf_d['wpx']:,}×{inf_d['hpx']:,} px · {len(tif_d)/1e6:.1f} MB")
                     if dtf_out=="tif": st.download_button("⬇️ TIF CMJN DTF",tif_d,fn_td,"image/tiff",use_container_width=True)
-                    elif dtf_out=="pmn": st.download_button("⬇️ PMN MainTap",pmn_d,fn_pd,"text/plain",use_container_width=True)
+                    elif dtf_out=="prn": st.download_button("⬇️ PRN MainTap",prn_d,fn_prd,"text/plain",use_container_width=True)
                     else:
-                        readme=f"IMPRESSION DTF\nFormat:{fmt} {dtf_w:.0f}x{dtf_h:.0f}mm DPI:{dtf_dpi} Copies:{dtf_cop}\nMiroir:{'Oui' if dtf_mir else 'Non'} WhiteBase:{'Oui' if dtf_wb else 'Non'}\n\n1. {fn_td} → vérification visuelle\n2. {fn_pd} → charger dans MainTap\n".encode()
+                        readme=(f"IMPRESSION DTF\nFormat:{fmt} {dtf_w:.0f}x{dtf_h:.0f}mm DPI:{dtf_dpi} Copies:{dtf_cop}\n"
+                                f"Miroir:{'Oui' if dtf_mir else 'Non'} WhiteBase:{'Oui' if dtf_wb else 'Non'}\n\n"
+                                f"1. {fn_td} → vérification visuelle\n2. {fn_prd} → charger dans MainTap\n").encode()
                         pv_buf=io.BytesIO(); pv_d.save(pv_buf,"PNG")
-                        zb=make_zip({fn_td:tif_d,fn_pd:pmn_d,f"{bn}_apercu.png":pv_buf.getvalue(),"README.txt":readme})
-                        st.download_button("⬇️ ZIP complet (TIF + PMN + README)",zb,fn_td.replace(".tif","_DTF.zip"),"application/zip",use_container_width=True)
+                        zb=make_zip({fn_td:tif_d,fn_prd:prn_d,
+                                     f"{bn}_apercu.png":pv_buf.getvalue(),"README.txt":readme})
+                        st.download_button("⬇️ ZIP complet",zb,fn_td.replace(".tif","_DTF.zip"),"application/zip",use_container_width=True)
                         da,db=st.columns(2)
                         da.download_button("⬇️ TIF seul",tif_d,fn_td,"image/tiff")
-                        db.download_button("⬇️ PMN seul",pmn_d,fn_pd,"text/plain")
+                        db.download_button("⬇️ PRN seul",prn_d,fn_prd,"text/plain")
                 except Exception as e: st.error(f"❌ Erreur DTF : {e}"); st.exception(e)
 
 
 # ╔═══════════════════════════════════════════════════════════
-# ║  ONGLET 3 — SUPPRESSION DE FOND
+# ║  ONGLET 3 — SUPPRESSION DE FOND (pro)
 # ╚═══════════════════════════════════════════════════════════
-with tab_bg:
+with TAB_BG:
 
-    bl, br = st.columns([1.05, 1], gap="large")
+    BGL,BGR=st.columns([1.05,1],gap="large")
 
-    with bl:
+    with BGL:
         sec("1","Image source")
-        up_b=st.file_uploader("Chargez une image avec fond à supprimer",
+        up_b=st.file_uploader("Image avec fond à supprimer",
             type=["png","jpg","jpeg","tif","tiff","bmp","webp"],
-            key="bg_up", label_visibility="collapsed")
+            key="bg_up",label_visibility="collapsed")
         src_b=None
         if up_b:
             try: src_b=load_img(up_b)
-            except Exception as e: st.warning(f"Aperçu non disponible : {e}")
-            rbox(f"📂 <strong>{up_b.name}</strong> &nbsp;·&nbsp; {up_b.size/1024:.0f} KB"
-                 +(f" &nbsp;·&nbsp; {src_b.width}×{src_b.height} px" if src_b else ""))
+            except Exception as e: st.warning(f"❌ {e}")
+            if src_b:
+                rb(f"📂 <strong>{up_b.name}</strong> · {up_b.size/1024:.0f} KB · {src_b.width}×{src_b.height} px")
 
         sec("2","Méthode de suppression")
-        method=st.radio("Type de fond",["Blanc","Noir","Couleur personnalisée"],horizontal=True,key="bg_meth")
-        tol=st.slider("Tolérance (seuil de détection)",min_value=5,max_value=120,value=30,key="bg_tol",
-                      help="Plus la valeur est haute, plus le fond est supprimé largement.")
+        method=st.radio("Algorithme",
+            ["Blanc","Noir","Couleur","FloodFill (bords)","GrabCut (auto)"],
+            horizontal=False,key="bg_meth",
+            captions=[
+                "Supprime les zones proches du blanc",
+                "Supprime les zones proches du noir",
+                "Supprime une couleur précise",
+                "Supprime le fond connecté aux bords de l'image (idéal fond uni)",
+                "Séparation automatique sujet/fond par IA (idéal objets centrés)",
+            ])
 
-        if method=="Couleur personnalisée":
-            ibox("Entrez la couleur du fond à supprimer (valeurs R, G, B de 0 à 255).")
+        tol=st.slider("Tolérance / Sensibilité",min_value=5,max_value=150,value=40,key="bg_tol",
+                      help="Augmentez si le fond n'est pas entièrement supprimé. "
+                           "Réduisez si des parties du sujet disparaissent.")
+
+        if method=="Couleur":
+            ib("Entrez les valeurs RVB de la couleur à supprimer (0–255).")
             bc1,bc2,bc3=st.columns(3)
-            with bc1: cr=st.number_input("Rouge (R)",min_value=0,max_value=255,value=255,key="bg_r")
-            with bc2: cg=st.number_input("Vert (G)",min_value=0,max_value=255,value=255,key="bg_g")
-            with bc3: cb_=st.number_input("Bleu (B)",min_value=0,max_value=255,value=255,key="bg_b")
+            with bc1: cr=st.number_input("Rouge",min_value=0,max_value=255,value=0,key="bg_r")
+            with bc2: cg=st.number_input("Vert",min_value=0,max_value=255,value=255,key="bg_g")
+            with bc3: cb_=st.number_input("Bleu",min_value=0,max_value=255,value=0,key="bg_b")
             cpick=(int(cr),int(cg),int(cb_))
         else:
             cpick=(255,255,255)
 
-        sec("3","Options de sortie")
-        bg_fmt=st.radio("Format de sortie",["PNG (transparent)","TIF CMJN (fond blanc)"],horizontal=True,key="bg_fmt")
+        sec("3","Affinement des bords")
+        c1,c2=st.columns(2)
+        with c1: refine=st.toggle("🔬 Nettoyer les pixels parasites",value=True,key="bg_ref")
+        with c2: feather=st.slider("Lissage bords (px)",0,8,2,key="bg_fth")
+
+        sec("4","Format de sortie")
+        bg_fmt=st.radio("Format",
+            ["PNG transparent","PNG fond coloré","TIF CMJN (fond blanc)"],
+            horizontal=False,key="bg_fmt")
         bg_dpi=st.selectbox("Résolution DPI",[72,150,300,600],index=2,key="bg_dpi")
 
-    with br:
+        if "fond coloré" in bg_fmt:
+            fc1,fc2,fc3=st.columns(3)
+            with fc1: nbr=st.number_input("R fond",0,255,255,key="nr")
+            with fc2: nbg=st.number_input("G fond",0,255,255,key="ng")
+            with fc3: nbb=st.number_input("B fond",0,255,255,key="nb")
+            new_bg_color=(int(nbr),int(nbg),int(nbb))
+        else:
+            new_bg_color=(255,255,255)
+
+    with BGR:
         sec("","Aperçu")
 
         if not src_b:
-            st.markdown("")
-            wbox("Chargez une image pour voir l'aperçu et lancer la suppression du fond.")
+            wb("Chargez une image pour commencer.")
         else:
-            col_av, col_ap = st.columns(2)
-            with col_av:
-                st.markdown("**Avant**")
-                st.image(src_b, use_container_width=True)
-            with col_ap:
-                st.markdown("**Après (aperçu)**")
+            # Calcul aperçu en temps réel
+            with st.spinner("Calcul de l'aperçu…"):
                 try:
-                    prev_bg=remove_bg(src_b,method,int(tol),cpick)
-                    # Aperçu sur damier pour montrer la transparence
-                    csize=14; W,H=prev_bg.width,prev_bg.height
-                    checker=Image.new("RGB",(W,H))
-                    draw_c=ImageDraw.Draw(checker)
-                    for y in range(0,H,csize):
-                        for x in range(0,W,csize):
-                            c=(200,200,200) if (x//csize+y//csize)%2==0 else (255,255,255)
-                            draw_c.rectangle([x,y,x+csize,y+csize],fill=c)
-                    checker.paste(prev_bg.convert("RGB"),(0,0),prev_bg.split()[3])
-                    st.image(checker,use_container_width=True)
+                    prev_result=remove_bg_advanced(src_b,method,int(tol),cpick,refine,feather)
+                    result_ready=True
                 except Exception as e:
-                    st.warning(f"Aperçu erreur : {e}"); prev_bg=None
+                    st.error(f"Erreur aperçu : {e}"); result_ready=False; prev_result=None
 
-            st.markdown("")
-            if st.button("✂️  Supprimer le fond & Télécharger",type="primary",use_container_width=True,key="bg_run"):
-                try:
-                    with st.spinner("Traitement en cours…"):
-                        result=remove_bg(src_b,method,int(tol),cpick)
-                    bn=Path(up_b.name).stem; ts=datetime.now().strftime("%Y%m%d_%H%M")
-                    if "PNG" in bg_fmt:
-                        buf=io.BytesIO(); result.save(buf,"PNG"); buf.seek(0)
-                        st.download_button("⬇️ Télécharger PNG transparent",buf.read(),f"{bn}_sans_fond_{ts}.png","image/png",use_container_width=True)
-                    else:
-                        # TIF CMJN avec fond blanc
-                        bg_w=Image.new("RGB",result.size,(255,255,255))
-                        bg_w.paste(result.convert("RGB"),(0,0),result.split()[3])
-                        tif_bg=to_tif(bg_w.convert("CMYK"),bg_dpi,"tiff_lzw")
-                        st.download_button("⬇️ Télécharger TIF CMJN",tif_bg,f"{bn}_sans_fond_{ts}.tif","image/tiff",use_container_width=True)
-                    rbox(f"✅ <strong>Fond supprimé !</strong> &nbsp;·&nbsp; Format : {bg_fmt} &nbsp;·&nbsp; {result.width}×{result.height} px")
-                except Exception as e: st.error(f"❌ Erreur : {e}"); st.exception(e)
+            if result_ready and prev_result:
+                col_av,col_ap=st.columns(2)
+                with col_av:
+                    st.markdown("**Avant**")
+                    st.image(src_b,use_container_width=True)
+                with col_ap:
+                    st.markdown("**Après**")
+                    # Damier pour montrer la transparence
+                    W,H=prev_result.size; cs=max(8,min(W,H)//30)
+                    chk=Image.new("RGB",(W,H))
+                    dk=ImageDraw.Draw(chk)
+                    c1v=(200,200,200) if DARK else (180,180,180)
+                    c2v=(255,255,255)
+                    for y in range(0,H,cs):
+                        for x in range(0,W,cs):
+                            dk.rectangle([x,y,x+cs,y+cs],fill=c1v if (x//cs+y//cs)%2==0 else c2v)
+                    chk.paste(prev_result.convert("RGB"),(0,0),prev_result.split()[3])
+                    st.image(chk,use_container_width=True)
+
+                # Info pixels supprimés
+                alpha_arr=np.array(prev_result.split()[3])
+                pct_removed=int(100*(alpha_arr<128).sum()/(alpha_arr.size))
+                rb(f"✅ Aperçu prêt · <strong>{pct_removed}%</strong> du fond supprimé · "
+                   f"{prev_result.width}×{prev_result.height} px")
+
+                st.markdown("")
+                if st.button("✂️  Supprimer le fond — Télécharger",
+                             type="primary",use_container_width=True,key="bg_run"):
+                    try:
+                        with st.spinner("Génération du fichier final…"):
+                            final=remove_bg_advanced(src_b,method,int(tol),cpick,refine,feather)
+                        bn=Path(up_b.name).stem; ts=datetime.now().strftime("%Y%m%d_%H%M")
+                        if "PNG transparent" in bg_fmt:
+                            buf=io.BytesIO(); final.save(buf,"PNG",optimize=True); buf.seek(0)
+                            st.download_button("⬇️ PNG transparent",buf.read(),
+                                f"{bn}_sans_fond_{ts}.png","image/png",use_container_width=True)
+                        elif "fond coloré" in bg_fmt:
+                            nbg_img=Image.new("RGB",final.size,new_bg_color)
+                            nbg_img.paste(final.convert("RGB"),(0,0),final.split()[3])
+                            buf=io.BytesIO(); nbg_img.save(buf,"PNG"); buf.seek(0)
+                            st.download_button("⬇️ PNG fond coloré",buf.read(),
+                                f"{bn}_fond_colore_{ts}.png","image/png",use_container_width=True)
+                        else:
+                            bg_w=Image.new("RGB",final.size,(255,255,255))
+                            bg_w.paste(final.convert("RGB"),(0,0),final.split()[3])
+                            tif_bg=to_tif(bg_w.convert("CMYK"),bg_dpi,"tiff_lzw")
+                            st.download_button("⬇️ TIF CMJN",tif_bg,
+                                f"{bn}_sans_fond_{ts}.tif","image/tiff",use_container_width=True)
+                        rb(f"✅ <strong>Fichier prêt !</strong> · Format : {bg_fmt} · "
+                           f"{final.width}×{final.height} px · {bg_dpi} DPI")
+                    except Exception as e: st.error(f"❌ Erreur : {e}"); st.exception(e)
