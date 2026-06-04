@@ -187,6 +187,18 @@ def make_zip(files:dict)->bytes:
         for n,d in files.items(): z.writestr(n,d if isinstance(d,bytes) else d.encode())
     return buf.getvalue()
 
+def make_pdf(img_cmyk: Image.Image, w_mm: float, h_mm: float, dpi: int) -> bytes:
+    """Encode la planche CMJN en PDF haute résolution prêt à imprimer."""
+    # Convertir en RGB pour l'encodage PDF (Pillow encode PDF via RGB/L)
+    img_rgb = img_cmyk.convert("RGB")
+    buf = io.BytesIO()
+    # resolution en DPI, taille en points (1pt = 25.4/72 mm)
+    w_pt = w_mm / 25.4 * 72
+    h_pt = h_mm / 25.4 * 72
+    img_rgb.save(buf, format="PDF", resolution=dpi,
+                 save_all=False)
+    return buf.getvalue()
+
 # ─────────────────────────────────────────────────────────
 # SUPPRESSION DE FOND — AVANCÉE (OpenCV)
 # ─────────────────────────────────────────────────────────
@@ -291,17 +303,20 @@ def rip_gf(slots, w_m, h_m, cols, rows, gh, gv, mg, bl,
         rot=slot.get("rot",0) or rot_global
         if rot: src=src.rotate(-rot,expand=True)
 
-        # Fit dans la cellule
+        # Dimensions cible : taille personnalisée par slot ou taille de cellule par défaut
+        if slot.get("use_custom_size") and slot.get("custom_w_mm") and slot.get("custom_h_mm"):
+            tw=px_mm(slot["custom_w_mm"],dpi); th=px_mm(slot["custom_h_mm"],dpi)
+        else:
+            tw,th=cw,ch
         kr=slot.get("kr",False)
         if kr:
             r=src.width/src.height
-            cw2,ch2=(int(ch*r),ch) if cw/ch>r else (cw,int(cw/r))
+            tw2,th2=(int(th*r),th) if tw/th>r else (tw,int(tw/r))
         else:
-            cw2,ch2=cw,ch
-
-        src=src.resize((cw2,ch2),Image.LANCZOS)
-        ox=x+(cw-cw2)//2; oy=y+(ch-ch2)//2
-        cell=Image.new("RGB",(cw2,ch2),(255,255,255))
+            tw2,th2=tw,th
+        src=src.resize((tw2,th2),Image.LANCZOS)
+        ox=x+(cw-tw2)//2; oy=y+(ch-th2)//2
+        cell=Image.new("RGB",(tw2,th2),(255,255,255))
         alpha=src.split()[3]
         cell.paste(src.convert("RGB"),(0,0),alpha)
         board.paste(cell,(ox,oy))
@@ -519,18 +534,41 @@ with TAB_GF:
                     except: st.warning(f"❌ {u.name} — format non supporté")
                 if slots:
                     st.markdown("**Paramètres par image :**")
+                    u_slot=st.radio("Unité dimensions images",["mm","cm","m"],
+                        horizontal=True,key="slot_unit")
+                    ku_s={"mm":1.,"cm":10.,"m":1000.}[u_slot]
+                    su_s={"mm":.5,"cm":.05,"m":.001}[u_slot]
                     for i,slot in enumerate(slots):
-                        with st.expander(f"Image {i+1} — {slot['label']}", expanded=False):
+                        with st.expander(f"Image {i+1} — {slot['label']}", expanded=(i==0)):
+                            st.image(slot["img"],width=120,
+                                caption=f"Original : {slot['img'].width}×{slot['img'].height} px")
+                            st.markdown("**Dimensions sur le support**")
+                            slot["use_custom_size"]=st.checkbox(
+                                "📐 Taille personnalisée pour cette image",
+                                value=False,key=f"slot_cs_{i}")
+                            if slot["use_custom_size"]:
+                                sd1,sd2=st.columns(2)
+                                def_w=round(100./ku_s,2); def_h=round(100./ku_s,2)
+                                with sd1:
+                                    slot["custom_w_mm"]=st.number_input(
+                                        f"Largeur ({u_slot})",min_value=.1,
+                                        value=def_w,step=su_s,key=f"slot_w_{i}") * ku_s
+                                with sd2:
+                                    slot["custom_h_mm"]=st.number_input(
+                                        f"Hauteur ({u_slot})",min_value=.1,
+                                        value=def_h,step=su_s,key=f"slot_h_{i}") * ku_s
+                                st.caption(f"→ {slot['custom_w_mm']:.1f} × {slot['custom_h_mm']:.1f} mm")
+                            else:
+                                slot["custom_w_mm"]=None; slot["custom_h_mm"]=None
+                                st.caption("Taille calculée automatiquement depuis la grille")
                             ec1,ec2=st.columns(2)
                             with ec1:
-                                slot["rot"]=st.selectbox(f"Rotation",
+                                slot["rot"]=st.selectbox("Rotation",
                                     [0,90,180,270],index=0,
                                     format_func=lambda x:f"{x}°",key=f"slot_rot_{i}")
                             with ec2:
                                 slot["kr"]=st.checkbox("Conserver proportions",
                                     value=True,key=f"slot_kr_{i}")
-                            st.image(slot["img"],use_container_width=True,
-                                caption=f"{slot['img'].width}×{slot['img'].height} px")
             up=None; src_img=None
         else:
             ups=[]
@@ -688,8 +726,8 @@ with TAB_GF:
 
         # ── 5. SORTIE ─────────────────────────────────────────
         sec("5","Format de sortie")
-        out=st.radio("Sortie",["tif","prn","zip","zip_full"],
-            format_func={"tif":"🖼️ TIF CMJN","prn":"🖨️ PRN","zip":"📦 TIF+PRN","zip_full":"📦 ZIP+aperçu"}.get,
+        out=st.radio("Sortie",["tif","pdf","prn","zip","zip_full"],
+            format_func={"tif":"🖼️ TIF CMJN","pdf":"📄 PDF","prn":"🖨️ PRN","zip":"📦 TIF+PRN","zip_full":"📦 ZIP+aperçu"}.get,
             horizontal=True,key="gf_out")
 
     # ── COLONNE DROITE ─────────────────────────────────────
@@ -769,21 +807,37 @@ with TAB_GF:
                        f"{info['wpx']:,}×{info['hpx']:,} px · "
                        f"TIF CMJN : {len(tif_b)/1e6:.1f} MB")
 
+                    fn_pdf=fn_tif.replace(".tif",".pdf")
+
                     if out=="tif":
                         st.download_button("⬇️ Télécharger TIF CMJN",tif_b,fn_tif,"image/tiff",use_container_width=True)
+                    elif out=="pdf":
+                        st_msg.markdown("**⚙️ Génération PDF…**")
+                        # Reconstruire l'image RGB depuis le TIF pour le PDF
+                        img_for_pdf=Image.open(io.BytesIO(tif_b)).convert("RGB")
+                        pdf_b=make_pdf(img_for_pdf, print_w*1000, ph_rip*1000, dpi)
+                        st.download_button("⬇️ Télécharger PDF",pdf_b,fn_pdf,"application/pdf",use_container_width=True)
+                        st_msg.markdown("**✅ PDF prêt !**")
                     elif out=="prn":
                         st.download_button("⬇️ Télécharger PRN",prn_b,fn_prn,"text/plain",use_container_width=True)
                     else:
+                        # ZIP — toujours inclure TIF + PRN, PDF en bonus dans zip_full
                         files={fn_tif:tif_b,fn_prn:prn_b}
                         if out=="zip_full":
-                            buf=io.BytesIO(); pv.save(buf,"PNG")
-                            files[f"{bn}_apercu.png"]=buf.getvalue()
+                            buf_pv=io.BytesIO(); pv.save(buf_pv,"PNG")
+                            files[f"{bn}_apercu.png"]=buf_pv.getvalue()
+                            img_for_pdf2=Image.open(io.BytesIO(tif_b)).convert("RGB")
+                            files[fn_pdf]=make_pdf(img_for_pdf2, print_w*1000, ph_rip*1000, dpi)
                         zb=make_zip(files)
                         fn_zip=fn_tif.replace(".tif","_COMPLET.zip")
                         st.download_button("⬇️ Télécharger ZIP",zb,fn_zip,"application/zip",use_container_width=True)
-                        da,db=st.columns(2)
-                        da.download_button("⬇️ TIF seul",tif_b,fn_tif,"image/tiff")
-                        db.download_button("⬇️ PRN seul",prn_b,fn_prn,"text/plain")
+                        da,db,dc=st.columns(3)
+                        da.download_button("⬇️ TIF",tif_b,fn_tif,"image/tiff")
+                        db.download_button("⬇️ PRN",prn_b,fn_prn,"text/plain")
+                        if out=="zip_full":
+                            img_for_pdf3=Image.open(io.BytesIO(tif_b)).convert("RGB")
+                            pdf_b3=make_pdf(img_for_pdf3, print_w*1000, ph_rip*1000, dpi)
+                            dc.download_button("⬇️ PDF",pdf_b3,fn_pdf,"application/pdf")
                 except Exception as e: st.error(f"❌ Erreur RIP : {e}"); st.exception(e)
 
 
@@ -829,9 +883,9 @@ with TAB_DTF:
             dtf_cop=st.number_input("Copies",min_value=1,max_value=999,value=1,key="dtf_cop")
 
         sec("4","Format de sortie")
-        dtf_out=st.radio("Sortie",["tif","prn","zip"],
-            format_func={"tif":"🖼️ TIF CMJN","prn":"🖨️ PRN","zip":"📦 ZIP complet"}.get,
-            horizontal=True,key="dtf_out",index=2)
+        dtf_out=st.radio("Sortie",["tif","pdf","prn","zip"],
+            format_func={"tif":"🖼️ TIF CMJN","pdf":"📄 PDF","prn":"🖨️ PRN","zip":"📦 ZIP complet"}.get,
+            horizontal=True,key="dtf_out",index=3)
 
     with DR:
         sec("","Récapitulatif & Aperçu")
@@ -875,21 +929,31 @@ with TAB_DTF:
                            "cols":1,"rows":1,"gh":0,"gv":0,"mg":0,
                            "file":up_d.name,"mode":"DTF","q":dtf_q}
                     prn_d=make_prn(job_d).encode()
+                    fn_pdf_d=fn_td.replace(".tif",".pdf")
                     sm.markdown("**✅ RIP DTF terminé !**")
                     rb(f"✅ <strong>RIP DTF !</strong> · {inf_d['wpx']:,}×{inf_d['hpx']:,} px · {len(tif_d)/1e6:.1f} MB")
-                    if dtf_out=="tif": st.download_button("⬇️ TIF CMJN DTF",tif_d,fn_td,"image/tiff",use_container_width=True)
-                    elif dtf_out=="prn": st.download_button("⬇️ PRN MainTap",prn_d,fn_prd,"text/plain",use_container_width=True)
+                    if dtf_out=="tif":
+                        st.download_button("⬇️ TIF CMJN DTF",tif_d,fn_td,"image/tiff",use_container_width=True)
+                    elif dtf_out=="pdf":
+                        pdf_d=make_pdf(Image.open(io.BytesIO(tif_d)).convert("RGB"),dtf_w,dtf_h,dtf_dpi)
+                        st.download_button("⬇️ PDF DTF",pdf_d,fn_pdf_d,"application/pdf",use_container_width=True)
+                    elif dtf_out=="prn":
+                        st.download_button("⬇️ PRN MainTap",prn_d,fn_prd,"text/plain",use_container_width=True)
                     else:
+                        pdf_zip=make_pdf(Image.open(io.BytesIO(tif_d)).convert("RGB"),dtf_w,dtf_h,dtf_dpi)
                         readme=(f"IMPRESSION DTF\nFormat:{fmt} {dtf_w:.0f}x{dtf_h:.0f}mm DPI:{dtf_dpi} Copies:{dtf_cop}\n"
                                 f"Miroir:{'Oui' if dtf_mir else 'Non'} WhiteBase:{'Oui' if dtf_wb else 'Non'}\n\n"
-                                f"1. {fn_td} → vérification visuelle\n2. {fn_prd} → charger dans MainTap\n").encode()
+                                f"1. {fn_td}   → vérification TIF\n"
+                                f"2. {fn_pdf_d} → vérification PDF\n"
+                                f"3. {fn_prd}   → charger dans MainTap\n").encode()
                         pv_buf=io.BytesIO(); pv_d.save(pv_buf,"PNG")
-                        zb=make_zip({fn_td:tif_d,fn_prd:prn_d,
+                        zb=make_zip({fn_td:tif_d,fn_pdf_d:pdf_zip,fn_prd:prn_d,
                                      f"{bn}_apercu.png":pv_buf.getvalue(),"README.txt":readme})
                         st.download_button("⬇️ ZIP complet",zb,fn_td.replace(".tif","_DTF.zip"),"application/zip",use_container_width=True)
-                        da,db=st.columns(2)
-                        da.download_button("⬇️ TIF seul",tif_d,fn_td,"image/tiff")
-                        db.download_button("⬇️ PRN seul",prn_d,fn_prd,"text/plain")
+                        da,db,dc=st.columns(3)
+                        da.download_button("⬇️ TIF",tif_d,fn_td,"image/tiff")
+                        db.download_button("⬇️ PDF",pdf_zip,fn_pdf_d,"application/pdf")
+                        dc.download_button("⬇️ PRN",prn_d,fn_prd,"text/plain")
                 except Exception as e: st.error(f"❌ Erreur DTF : {e}"); st.exception(e)
 
 
